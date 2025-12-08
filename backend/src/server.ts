@@ -5,6 +5,10 @@ import path from 'path';
 import { connectDatabase } from './config/database';
 import { errorHandler } from './middleware/error.middleware';
 import authRoutes from './routes/auth.routes';
+import userRoutes from './routes/user.routes';
+import postRoutes from './routes/post.routes';
+import commentRoutes from './routes/comment.routes';
+import likeRoutes from './routes/like.routes';
 
 dotenv.config();
 
@@ -29,10 +33,11 @@ app.get('/api/health', (req, res) => {
 
 // Routes
 app.use('/api/auth', authRoutes);
-// TODO: Add more routes
-// app.use('/api/users', userRoutes);
-// app.use('/api/posts', postRoutes);
-// app.use('/api/ai', aiRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/posts', postRoutes);
+app.use('/api', commentRoutes);
+app.use('/api', likeRoutes);
+// TODO: app.use('/api/ai', aiRoutes);
 
 // Error handling middleware
 app.use(errorHandler);
