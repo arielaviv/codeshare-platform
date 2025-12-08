@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { connectDatabase } from './config/database';
 import { errorHandler } from './middleware/error.middleware';
+import authRoutes from './routes/auth.routes';
 
 dotenv.config();
 
@@ -26,8 +27,9 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// TODO: Add routes here
-// app.use('/api/auth', authRoutes);
+// Routes
+app.use('/api/auth', authRoutes);
+// TODO: Add more routes
 // app.use('/api/users', userRoutes);
 // app.use('/api/posts', postRoutes);
 // app.use('/api/ai', aiRoutes);
