@@ -1,5 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { User } from '../models/User';
+import passport from 'passport';
+import { User, IUser } from '../models/User';
 import { generateTokens, verifyRefreshToken } from '../utils/jwt.utils';
 import { registerSchema, loginSchema } from '../utils/validators';
 import { ApiError } from '../middleware/error.middleware';
@@ -275,5 +276,42 @@ router.get('/me', authenticate, async (req: Request, res: Response) => {
     },
   });
 });
+
+/**
+ * @swagger
+ * /api/auth/google:
+ *   get:
+ *     summary: Initiate Google OAuth
+ *     tags: [Auth]
+ *     responses:
+ *       302:
+ *         description: Redirect to Google
+ */
+router.get('/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
+
+/**
+ * @swagger
+ * /api/auth/google/callback:
+ *   get:
+ *     summary: Google OAuth callback
+ *     tags: [Auth]
+ *     responses:
+ *       302:
+ *         description: Redirect to frontend with tokens
+ */
+router.get(
+  '/google/callback',
+  passport.authenticate('google', { session: false, failureRedirect: '/login' }),
+  async (req: Request, res: Response) => {
+    const user = req.user as IUser;
+    const tokens = generateTokens(user._id, user.username);
+
+    user.refreshToken = tokens.refreshToken;
+    await user.save();
+
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    res.redirect(`${frontendUrl}/auth/callback?token=${tokens.accessToken}&refresh=${tokens.refreshToken}`);
+  }
+);
 
 export default router;
