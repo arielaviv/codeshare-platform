@@ -3,6 +3,8 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import path from 'path';
 import { connectDatabase } from './config/database';
+import { swaggerSpec } from './config/swagger';
+import swaggerUi from 'swagger-ui-express';
 import { errorHandler } from './middleware/error.middleware';
 import authRoutes from './routes/auth.routes';
 import userRoutes from './routes/user.routes';
@@ -26,6 +28,9 @@ app.use(express.urlencoded({ extended: true }));
 
 // Static files for uploads
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+
+// Swagger docs
+app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
 // Health check
 app.get('/api/health', (req, res) => {
