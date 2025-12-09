@@ -9,6 +9,7 @@ import userRoutes from './routes/user.routes';
 import postRoutes from './routes/post.routes';
 import commentRoutes from './routes/comment.routes';
 import likeRoutes from './routes/like.routes';
+import aiRoutes from './routes/ai.routes';
 
 dotenv.config();
 
@@ -37,7 +38,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/posts', postRoutes);
 app.use('/api', commentRoutes);
 app.use('/api', likeRoutes);
-// TODO: app.use('/api/ai', aiRoutes);
+app.use('/api/ai', aiRoutes);
 
 // Error handling middleware
 app.use(errorHandler);
