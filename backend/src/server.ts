@@ -4,7 +4,9 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { connectDatabase } from './config/database';
 import { swaggerSpec } from './config/swagger';
+import { configurePassport } from './config/passport';
 import swaggerUi from 'swagger-ui-express';
+import passport from 'passport';
 import { errorHandler } from './middleware/error.middleware';
 import authRoutes from './routes/auth.routes';
 import userRoutes from './routes/user.routes';
@@ -25,6 +27,10 @@ app.use(cors({
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Passport
+configurePassport();
+app.use(passport.initialize());
 
 // Static files for uploads
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
