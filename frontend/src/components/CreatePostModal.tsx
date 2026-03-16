@@ -3,6 +3,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import api from '../services/api';
+import CodeEditor from './CodeEditor';
 
 const postSchema = z.object({
   title: z.string().min(1, 'Title required').max(200),
@@ -25,10 +26,16 @@ export default function CreatePostModal({ onClose, onSuccess }: Props) {
   const {
     register,
     handleSubmit,
+    setValue,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<PostForm>({
     resolver: zodResolver(postSchema),
+    defaultValues: { code: '', language: '' },
   });
+
+  const codeValue = watch('code');
+  const languageValue = watch('language');
 
   const onSubmit = async (data: PostForm) => {
     try {
@@ -101,12 +108,15 @@ export default function CreatePostModal({ onClose, onSuccess }: Props) {
 
             <div>
               <label className="block text-sm font-medium text-gray-700">Code</label>
-              <textarea
-                {...register('code')}
-                rows={10}
-                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md font-mono text-sm"
-                placeholder="Paste your code here..."
-              />
+              <div className="mt-1 rounded-md border border-gray-300 overflow-hidden">
+                <CodeEditor
+                  value={codeValue}
+                  language={languageValue}
+                  onChange={(val) => setValue('code', val, { shouldValidate: true })}
+                  height="350px"
+                  showMinimap
+                />
+              </div>
               {errors.code && (
                 <p className="text-red-500 text-sm mt-1">{errors.code.message}</p>
               )}
