@@ -11,10 +11,16 @@
     "test:watch": "jest --watch",
     "lint": "eslint src/**/*.ts"
   },
-  "keywords": ["codeshare", "api", "typescript", "express"],
+  "keywords": [
+    "codeshare",
+    "api",
+    "typescript",
+    "express"
+  ],
   "author": "Ariel Aviv",
   "license": "MIT",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.72.1",
     "bcrypt": "^5.1.1",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",

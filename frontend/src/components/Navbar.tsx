@@ -16,6 +16,12 @@ export default function Navbar() {
             {user ? (
               <>
                 <Link
+                  to="/chat"
+                  className="text-purple-600 hover:text-purple-800 font-medium"
+                >
+                  AI Chat
+                </Link>
+                <Link
                   to={`/profile/${user.id}`}
                   className="flex items-center space-x-2 text-gray-700 hover:text-gray-900"
                 >

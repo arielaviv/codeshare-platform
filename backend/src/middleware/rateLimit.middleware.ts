@@ -1,11 +1,25 @@
 import rateLimit from 'express-rate-limit';
 
 export const aiRateLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 10, // 10 requests per hour per user
+  windowMs: 60 * 60 * 1000,
+  max: 10,
   message: {
     status: 'error',
     message: 'Too many AI requests. Please try again later.',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    return req.user?._id?.toString() || req.ip || 'anonymous';
+  },
+});
+
+export const chatRateLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 30,
+  message: {
+    status: 'error',
+    message: 'Chat rate limit reached. Please try again later.',
   },
   standardHeaders: true,
   legacyHeaders: false,

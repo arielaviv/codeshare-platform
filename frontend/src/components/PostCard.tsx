@@ -1,10 +1,9 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import Prism from 'prismjs';
-import 'prismjs/themes/prism-tomorrow.css';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../services/api';
 import { Post } from '../types';
+import CodeEditor from './CodeEditor';
 
 interface Props {
   post: Post;
@@ -26,12 +25,6 @@ export default function PostCard({ post, onUpdate }: Props) {
       console.error('Like error:', err);
     }
   };
-
-  const highlightedCode = Prism.highlight(
-    post.code,
-    Prism.languages.javascript,
-    'javascript'
-  );
 
   return (
     <div className="bg-white rounded-lg shadow p-6">
@@ -78,12 +71,14 @@ export default function PostCard({ post, onUpdate }: Props) {
             {post.language}
           </span>
         </div>
-        <pre className="bg-gray-900 rounded-lg p-4 overflow-x-auto">
-          <code
-            className="text-sm"
-            dangerouslySetInnerHTML={{ __html: highlightedCode }}
+        <div className="rounded-lg overflow-hidden">
+          <CodeEditor
+            value={post.code}
+            language={post.language}
+            height="200px"
+            readOnly
           />
-        </pre>
+        </div>
       </div>
 
       {post.image && (

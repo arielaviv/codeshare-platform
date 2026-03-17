@@ -1,7 +1,7 @@
+import Anthropic from '@anthropic-ai/sdk';
 import { Post } from '../models/Post';
 
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 
 interface AIResponse {
   explanation: string;
@@ -18,7 +18,6 @@ export const getCodeExplanation = async (
     throw new Error('Post not found');
   }
 
-  // Return cached explanation if available
   if (post.aiExplanation && !forceRefresh) {
     return {
       explanation: post.aiExplanation,
@@ -26,9 +25,11 @@ export const getCodeExplanation = async (
     };
   }
 
-  if (!OPENAI_API_KEY) {
+  if (!ANTHROPIC_API_KEY) {
     throw new Error('AI service not configured');
   }
+
+  const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 
   const prompt = `Explain the following ${post.language} code in a clear, beginner-friendly way.
 Include:
@@ -43,28 +44,15 @@ ${post.code}
 
 Keep the explanation concise (max 300 words).`;
 
-  const response = await fetch(OPENAI_API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${OPENAI_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: 'gpt-3.5-turbo',
-      messages: [{ role: 'user', content: prompt }],
-      max_tokens: 500,
-      temperature: 0.7,
-    }),
+  const response = await client.messages.create({
+    model: 'claude-haiku-4-20250414',
+    max_tokens: 500,
+    messages: [{ role: 'user', content: prompt }],
   });
 
-  if (!response.ok) {
-    throw new Error('AI service unavailable');
-  }
+  const textBlock = response.content.find((block) => block.type === 'text');
+  const explanation = textBlock ? textBlock.text : 'Unable to generate explanation';
 
-  const data = await response.json();
-  const explanation = data.choices[0]?.message?.content || 'Unable to generate explanation';
-
-  // Cache the explanation
   post.aiExplanation = explanation;
   await post.save();
 
