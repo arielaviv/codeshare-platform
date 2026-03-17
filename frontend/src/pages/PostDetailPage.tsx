@@ -5,6 +5,7 @@ import { useForm } from 'react-hook-form';
 import api from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import Navbar from '../components/Navbar';
+import CodeEditor from '../components/CodeEditor';
 import { Post, Comment } from '../types';
 
 export default function PostDetailPage() {
@@ -72,9 +73,15 @@ export default function PostDetailPage() {
           <h1 className="text-2xl font-bold mb-4">{post.title}</h1>
           {post.description && <p className="text-gray-600 mb-4">{post.description}</p>}
 
-          <pre className="bg-gray-900 text-gray-100 rounded-lg p-4 overflow-x-auto mb-4">
-            <code>{post.code}</code>
-          </pre>
+          <div className="mb-4">
+            <CodeEditor
+              value={post.code}
+              language={post.language}
+              height="400px"
+              readOnly
+              showMinimap
+            />
+          </div>
 
           {user && (
             <button
