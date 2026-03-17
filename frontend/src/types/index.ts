@@ -43,3 +43,18 @@ export interface Pagination {
   pages: number;
   hasMore: boolean;
 }
+
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface ToolUsed {
+  name: string;
+  input: Record<string, unknown>;
+}
+
+export interface ChatResponse {
+  message: string;
+  toolsUsed: ToolUsed[];
+}
