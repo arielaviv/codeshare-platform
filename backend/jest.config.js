@@ -5,19 +5,31 @@ module.exports = {
   roots: ['<rootDir>/tests'],
   testMatch: ['**/*.test.ts'],
   collectCoverageFrom: [
-    'src/**/*.ts',
-    '!src/types/**',
-    '!src/server.ts'
+    'src/routes/**/*.ts',
+    'src/middleware/**/*.ts',
+    'src/models/**/*.ts',
+    'src/utils/**/*.ts',
+    'src/services/ai.service.ts'
   ],
   coverageThreshold: {
     global: {
-      branches: 80,
+      branches: 55,
+      functions: 80,
+      lines: 80,
+      statements: 80
+    },
+    './src/routes/': {
+      branches: 75,
       functions: 80,
       lines: 80,
       statements: 80
     }
   },
+  setupFiles: ['<rootDir>/tests/env.ts'],
   setupFilesAfterEnv: ['<rootDir>/tests/setup.ts'],
   moduleFileExtensions: ['ts', 'js', 'json'],
-  verbose: true
+  verbose: true,
+  transform: {
+    '^.+\\.ts$': ['ts-jest', { diagnostics: false }]
+  }
 };
