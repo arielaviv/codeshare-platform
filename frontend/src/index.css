@@ -2,19 +2,81 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  @apply bg-gray-50 text-gray-900;
+@layer base {
+  body {
+    @apply bg-surface-secondary text-neutral-900 antialiased;
+  }
+  .dark body {
+    background-color: #0A0A0A;
+    color: #E5E5E5;
+  }
+}
+
+@layer components {
+  .section-label {
+    @apply text-[11px] font-medium uppercase tracking-wider px-3 py-2;
+    color: #A3A3A3;
+  }
+  .dark .section-label {
+    color: #666666;
+  }
+}
+
+/* Subtle scrollbar */
+.subtle-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(113, 113, 122, 0.3) transparent;
+}
+.subtle-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.subtle-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.subtle-scrollbar::-webkit-scrollbar-thumb {
+  background-color: rgba(113, 113, 122, 0.3);
+  border-radius: 3px;
+}
+.subtle-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(113, 113, 122, 0.5);
+}
+
+/* Skeleton loading animation */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, #1A1A1A 25%, #2A2A2A 50%, #1A1A1A 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+  border-radius: 4px;
+}
+.skeleton-light {
+  background: linear-gradient(90deg, #F0F0F0 25%, #E0E0E0 50%, #F0F0F0 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+  border-radius: 4px;
+}
+
+/* Text shimmer for AI reasoning */
+@keyframes textShimmer {
+  0% { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+.text-shimmer {
+  background: linear-gradient(90deg, #444 25%, #E8E8E8 50%, #444 75%);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: textShimmer 2s linear infinite;
 }
 
 @keyframes fadeSlideUp {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes dotPulse {
@@ -22,10 +84,19 @@ body {
   40% { opacity: 1; }
 }
 
-.animate-fade-slide-up {
-  animation: fadeSlideUp 150ms ease-out both;
+@keyframes progressSweep {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(350%); }
 }
 
+@keyframes flash {
+  0% { background-color: rgba(59, 130, 246, 0.15); }
+  100% { background-color: transparent; }
+}
+
+.animate-fade-slide-up { animation: fadeSlideUp 150ms ease-out both; }
 .animate-dot-1 { animation: dotPulse 1.4s infinite both; animation-delay: 0ms; }
 .animate-dot-2 { animation: dotPulse 1.4s infinite both; animation-delay: 200ms; }
 .animate-dot-3 { animation: dotPulse 1.4s infinite both; animation-delay: 400ms; }
+.animate-progress-sweep { animation: progressSweep 2s ease-in-out infinite; }
+.animate-flash { animation: flash 1.5s ease-out; }
