@@ -30,7 +30,7 @@ export default function RegisterPage() {
     try {
       setError('');
       await registerUser(data.username, data.email, data.password);
-      navigate('/');
+      navigate('/chat');
     } catch (err: unknown) {
       const error = err as { response?: { data?: { message?: string } } };
       setError(error.response?.data?.message || 'Registration failed');
@@ -38,69 +38,70 @@ export default function RegisterPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4">
-      <div className="max-w-md w-full space-y-8">
-        <div>
-          <h2 className="text-center text-3xl font-bold text-gray-900">CodeShare</h2>
-          <p className="mt-2 text-center text-gray-600">Create your account</p>
+    <div className="min-h-screen flex items-center justify-center bg-[#0A0A0A] relative overflow-hidden">
+      <div className="fixed inset-0 opacity-[0.03] pointer-events-none" style={{
+        backgroundImage: 'radial-gradient(circle at 1px 1px, rgba(255,255,255,0.15) 1px, transparent 0)',
+        backgroundSize: '32px 32px',
+      }} />
+
+      <div className="relative z-10 max-w-sm w-full px-6">
+        <div className="text-center mb-8">
+          <div className="flex items-center justify-center gap-2.5 mb-4">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#00EAFA" strokeWidth="2">
+              <polyline points="16 18 22 12 16 6" />
+              <polyline points="8 6 2 12 8 18" />
+            </svg>
+          </div>
+          <h1 className="text-2xl font-bold text-[#E8E8E8] mb-1">Create your account</h1>
+          <p className="text-sm text-[#888]">Start building with AI in seconds</p>
         </div>
 
-        <form className="mt-8 space-y-6" onSubmit={handleSubmit(onSubmit)}>
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           {error && (
-            <div className="bg-red-50 text-red-500 p-3 rounded">{error}</div>
+            <div className="bg-red-500/10 text-red-400 border border-red-500/20 p-3 rounded-lg text-sm">{error}</div>
           )}
 
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700">Username</label>
-              <input
-                {...register('username')}
-                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-              />
-              {errors.username && (
-                <p className="text-red-500 text-sm mt-1">{errors.username.message}</p>
-              )}
-            </div>
+          <div>
+            <input
+              {...register('username')}
+              placeholder="Username"
+              className="w-full px-4 py-3 bg-[#141414] border border-[#2A2A2A] rounded-xl text-sm text-[#E8E8E8] placeholder:text-[#555] focus:outline-none focus:border-[#555] transition-colors"
+            />
+            {errors.username && <p className="text-red-400 text-xs mt-1.5">{errors.username.message}</p>}
+          </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700">Email</label>
-              <input
-                {...register('email')}
-                type="email"
-                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-              />
-              {errors.email && (
-                <p className="text-red-500 text-sm mt-1">{errors.email.message}</p>
-              )}
-            </div>
+          <div>
+            <input
+              {...register('email')}
+              type="email"
+              placeholder="Email"
+              className="w-full px-4 py-3 bg-[#141414] border border-[#2A2A2A] rounded-xl text-sm text-[#E8E8E8] placeholder:text-[#555] focus:outline-none focus:border-[#555] transition-colors"
+            />
+            {errors.email && <p className="text-red-400 text-xs mt-1.5">{errors.email.message}</p>}
+          </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700">Password</label>
-              <input
-                {...register('password')}
-                type="password"
-                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-              />
-              {errors.password && (
-                <p className="text-red-500 text-sm mt-1">{errors.password.message}</p>
-              )}
-            </div>
+          <div>
+            <input
+              {...register('password')}
+              type="password"
+              placeholder="Password (min 6 characters)"
+              className="w-full px-4 py-3 bg-[#141414] border border-[#2A2A2A] rounded-xl text-sm text-[#E8E8E8] placeholder:text-[#555] focus:outline-none focus:border-[#555] transition-colors"
+            />
+            {errors.password && <p className="text-red-400 text-xs mt-1.5">{errors.password.message}</p>}
           </div>
 
           <button
             type="submit"
             disabled={isSubmitting}
-            className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none disabled:opacity-50"
+            className="w-full py-3 bg-[#E8E8E8] text-[#0A0A0A] rounded-xl text-sm font-medium hover:bg-white disabled:opacity-50 transition-colors"
           >
-            {isSubmitting ? 'Creating account...' : 'Sign up'}
+            {isSubmitting ? 'Creating account...' : 'Get started'}
           </button>
         </form>
 
-        <p className="text-center text-sm text-gray-600">
+        <p className="text-center text-sm text-[#666] mt-6">
           Already have an account?{' '}
-          <Link to="/login" className="text-blue-600 hover:text-blue-500">
-            Sign in
-          </Link>
+          <Link to="/login" className="text-[#E8E8E8] hover:underline">Sign in</Link>
         </p>
       </div>
     </div>

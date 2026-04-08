@@ -14,6 +14,7 @@ export interface Post {
   language: string;
   description?: string;
   image?: string;
+  files?: Record<string, string>;
   aiExplanation?: string;
   likesCount: number;
   commentsCount: number;
@@ -57,4 +58,14 @@ export interface ToolUsed {
 export interface ChatResponse {
   message: string;
   toolsUsed: ToolUsed[];
+}
+
+export interface AgentSSEHandlers {
+  onTextDelta: (content: string) => void;
+  onFileWrite: (path: string, content: string) => void;
+  onFileDelete: (path: string) => void;
+  onToolCall: (name: string, input: Record<string, unknown>) => void;
+  onToolResult: (name: string, preview: string) => void;
+  onError: (message: string) => void;
+  onDone: (filesModified: string[]) => void;
 }

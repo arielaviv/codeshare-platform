@@ -3,7 +3,6 @@ import { useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../services/api';
-import Navbar from '../components/Navbar';
 import PostCard from '../components/PostCard';
 import { Post } from '../types';
 
@@ -53,90 +52,90 @@ export default function ProfilePage() {
       updateUser(data.user);
       queryClient.invalidateQueries({ queryKey: ['user', id] });
       setEditing(false);
-    } catch (err) {
-      console.error('Update failed:', err);
+    } catch {
+      // handled by UI state
     }
   };
 
   const posts = postsData?.posts || [];
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <Navbar />
-      <main className="max-w-2xl mx-auto px-4 py-8">
-        <div className="bg-white rounded-lg shadow p-6 mb-6">
-          <div className="flex items-center space-x-4">
-            {profile?.profileImage ? (
-              <img
-                src={`http://localhost:5000${profile.profileImage}`}
-                alt={profile.username}
-                className="w-20 h-20 rounded-full object-cover"
+    <div className="max-w-3xl px-6 py-6">
+      <h1 className="section-label px-0 mb-4">Profile</h1>
+
+      <div className="border border-edge dark:border-dark-border rounded p-6 bg-white dark:bg-dark-surface mb-6">
+        <div className="flex items-center gap-4">
+          {profile?.profileImage ? (
+            <img
+              src={`http://localhost:5000${profile.profileImage}`}
+              alt={profile.username}
+              className="w-16 h-16 rounded-full object-cover flex-shrink-0"
+            />
+          ) : (
+            <div className="w-16 h-16 rounded-full bg-surface-tertiary dark:bg-dark-border text-ink-secondary dark:text-dark-text-secondary text-xl font-medium flex items-center justify-center flex-shrink-0">
+              {profile?.username?.[0]?.toUpperCase()}
+            </div>
+          )}
+
+          {editing ? (
+            <div className="flex-1 space-y-2">
+              <input
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                className="w-full px-3 py-2 border border-edge dark:border-dark-border rounded text-sm bg-white dark:bg-dark-surface focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent"
+                placeholder="Username"
               />
-            ) : (
-              <div className="w-20 h-20 rounded-full bg-gray-300 flex items-center justify-center text-2xl">
-                {profile?.username?.[0]?.toUpperCase()}
+              <textarea
+                value={bio}
+                onChange={(e) => setBio(e.target.value)}
+                className="w-full px-3 py-2 border border-edge dark:border-dark-border rounded text-sm bg-white dark:bg-dark-surface focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent"
+                placeholder="Bio"
+                rows={2}
+              />
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => setProfileImage(e.target.files?.[0] || null)}
+                className="text-sm text-ink-secondary"
+              />
+              <div className="flex gap-2">
+                <button
+                  onClick={handleSave}
+                  className="px-4 py-2 bg-accent text-white rounded text-sm hover:bg-accent-hover transition-colors"
+                >
+                  Save
+                </button>
+                <button
+                  onClick={() => setEditing(false)}
+                  className="px-4 py-2 text-ink-secondary text-sm hover:text-ink transition-colors"
+                >
+                  Cancel
+                </button>
               </div>
-            )}
-
-            {editing ? (
-              <div className="flex-1 space-y-2">
-                <input
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  className="w-full px-3 py-2 border rounded"
-                  placeholder="Username"
-                />
-                <textarea
-                  value={bio}
-                  onChange={(e) => setBio(e.target.value)}
-                  className="w-full px-3 py-2 border rounded"
-                  placeholder="Bio"
-                  rows={2}
-                />
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => setProfileImage(e.target.files?.[0] || null)}
-                />
-                <div className="flex space-x-2">
-                  <button
-                    onClick={handleSave}
-                    className="px-4 py-2 bg-blue-600 text-white rounded"
-                  >
-                    Save
-                  </button>
-                  <button
-                    onClick={() => setEditing(false)}
-                    className="px-4 py-2 text-gray-600"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="flex-1">
-                <h1 className="text-2xl font-bold">{profile?.username}</h1>
-                <p className="text-gray-600">{profile?.bio || 'No bio yet'}</p>
-                {isOwnProfile && (
-                  <button
-                    onClick={handleEdit}
-                    className="mt-2 text-blue-600 hover:underline"
-                  >
-                    Edit Profile
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
+            </div>
+          ) : (
+            <div className="flex-1">
+              <h2 className="text-lg font-bold">{profile?.username}</h2>
+              <p className="text-sm text-ink-secondary dark:text-dark-text-secondary">{profile?.bio || 'No bio yet'}</p>
+              {isOwnProfile && (
+                <button
+                  onClick={handleEdit}
+                  className="mt-2 text-sm text-accent hover:underline"
+                >
+                  Edit Profile
+                </button>
+              )}
+            </div>
+          )}
         </div>
+      </div>
 
-        <h2 className="text-xl font-bold mb-4">Posts ({posts.length})</h2>
-        <div className="space-y-6">
-          {posts.map((post: Post) => (
-            <PostCard key={post._id} post={post} onUpdate={refetch} />
-          ))}
-        </div>
-      </main>
+      <h2 className="section-label px-0 mb-3">Posts ({posts.length})</h2>
+      <div className="space-y-4">
+        {posts.map((post: Post) => (
+          <PostCard key={post._id} post={post} onUpdate={refetch} />
+        ))}
+      </div>
     </div>
   );
 }
