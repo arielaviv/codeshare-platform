@@ -27,7 +27,7 @@ export default function CodeEditor({
   };
 
   return (
-    <div className="relative group rounded-lg overflow-hidden border border-gray-700">
+    <div className="relative group h-full">
       <Editor
         height={height}
         language={language}
@@ -35,13 +35,14 @@ export default function CodeEditor({
         theme="vs-dark"
         onChange={(val) => onChange?.(val ?? '')}
         loading={
-          <div className="bg-gray-900 rounded-lg flex items-center justify-center" style={{ height }}>
-            <span className="text-gray-500 text-sm">Loading editor...</span>
+          <div className="bg-[#1E1E1E] flex items-center justify-center" style={{ height }}>
+            <span className="text-[#666] text-sm">Loading editor...</span>
           </div>
         }
         options={{
           readOnly,
-          fontSize: 14,
+          fontSize: 13,
+          fontFamily: "'Fira Code', 'Cascadia Code', 'JetBrains Mono', Menlo, monospace",
           scrollBeyondLastLine: false,
           wordWrap: 'on',
           automaticLayout: true,
@@ -51,6 +52,10 @@ export default function CodeEditor({
           domReadOnly: readOnly,
           cursorStyle: readOnly ? 'underline-thin' : 'line',
           renderLineHighlight: readOnly ? 'none' : 'line',
+          tabSize: 2,
+          folding: true,
+          overviewRulerBorder: false,
+          hideCursorInOverviewRuler: true,
           scrollbar: {
             verticalScrollbarSize: 8,
             horizontalScrollbarSize: 8,
@@ -60,7 +65,7 @@ export default function CodeEditor({
       {readOnly && (
         <button
           onClick={handleCopy}
-          className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-gray-700/80 hover:bg-gray-600 text-gray-300 text-xs px-2 py-1 rounded"
+          className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-[#333] hover:bg-[#444] text-[#ccc] text-xs px-2 py-1 rounded"
         >
           {copied ? 'Copied!' : 'Copy'}
         </button>
