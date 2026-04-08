@@ -14,7 +14,10 @@
     "declarationMap": true,
     "sourceMap": true,
     "moduleResolution": "node",
-    "typeRoots": ["./node_modules/@types", "./src/types"]
+    "typeRoots": ["./node_modules/@types"]
+  },
+  "ts-node": {
+    "transpileOnly": true
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "tests"]

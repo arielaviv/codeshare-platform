@@ -12,3 +12,8 @@ export interface ChatResponse {
   message: string;
   toolsUsed: ToolUseRecord[];
 }
+
+export interface AgentRequest {
+  messages: ChatMessage[];
+  workspace?: Record<string, string>;
+}

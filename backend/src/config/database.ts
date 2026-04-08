@@ -1,10 +1,9 @@
 import mongoose from 'mongoose';
 
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/codeshare';
-
 export const connectDatabase = async (): Promise<void> => {
+  const uri = process.env.MONGODB_URI || 'mongodb://localhost:27017/codeshare';
   try {
-    await mongoose.connect(MONGODB_URI);
+    await mongoose.connect(uri);
     console.log('MongoDB connected successfully');
   } catch (error) {
     console.error('MongoDB connection error:', error);

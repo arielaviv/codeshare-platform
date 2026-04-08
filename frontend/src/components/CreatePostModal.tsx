@@ -58,38 +58,38 @@ export default function CreatePostModal({ onClose, onSuccess }: Props) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white dark:bg-dark-surface rounded border border-edge dark:border-dark-border max-w-2xl w-full max-h-[90vh] overflow-y-auto">
         <div className="p-6">
           <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-bold">Share Code Snippet</h2>
-            <button onClick={onClose} className="text-gray-500 hover:text-gray-700">
-              ✕
+            <h2 className="text-base font-semibold">Share Code Snippet</h2>
+            <button onClick={onClose} className="text-ink-tertiary dark:text-dark-text-tertiary hover:text-ink dark:hover:text-dark-text transition-colors">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M18 6L6 18M6 6l12 12" />
+              </svg>
             </button>
           </div>
 
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
             {error && (
-              <div className="bg-red-50 text-red-500 p-3 rounded">{error}</div>
+              <div className="bg-status-error/10 text-status-error border border-status-error/20 p-3 rounded text-sm">{error}</div>
             )}
 
             <div>
-              <label className="block text-sm font-medium text-gray-700">Title</label>
+              <label className="text-xs font-medium uppercase tracking-wide text-ink-tertiary">Title</label>
               <input
                 {...register('title')}
-                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md"
+                className="mt-1 block w-full px-3 py-2 border border-edge dark:border-dark-border rounded text-sm dark:bg-dark-bg dark:text-dark-text focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent"
                 placeholder="What does your code do?"
               />
-              {errors.title && (
-                <p className="text-red-500 text-sm mt-1">{errors.title.message}</p>
-              )}
+              {errors.title && <p className="text-status-error text-xs mt-1">{errors.title.message}</p>}
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700">Language</label>
+              <label className="text-xs font-medium uppercase tracking-wide text-ink-tertiary">Language</label>
               <select
                 {...register('language')}
-                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md"
+                className="mt-1 block w-full px-3 py-2 border border-edge dark:border-dark-border rounded text-sm dark:bg-dark-bg dark:text-dark-text focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent bg-white"
               >
                 <option value="">Select language</option>
                 <option value="javascript">JavaScript</option>
@@ -101,14 +101,12 @@ export default function CreatePostModal({ onClose, onSuccess }: Props) {
                 <option value="go">Go</option>
                 <option value="rust">Rust</option>
               </select>
-              {errors.language && (
-                <p className="text-red-500 text-sm mt-1">{errors.language.message}</p>
-              )}
+              {errors.language && <p className="text-status-error text-xs mt-1">{errors.language.message}</p>}
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700">Code</label>
-              <div className="mt-1 rounded-md border border-gray-300 overflow-hidden">
+              <label className="text-xs font-medium uppercase tracking-wide text-ink-tertiary">Code</label>
+              <div className="mt-1 rounded border border-edge overflow-hidden">
                 <CodeEditor
                   value={codeValue}
                   language={languageValue}
@@ -117,47 +115,41 @@ export default function CreatePostModal({ onClose, onSuccess }: Props) {
                   showMinimap
                 />
               </div>
-              {errors.code && (
-                <p className="text-red-500 text-sm mt-1">{errors.code.message}</p>
-              )}
+              {errors.code && <p className="text-status-error text-xs mt-1">{errors.code.message}</p>}
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700">
-                Description (optional)
-              </label>
+              <label className="text-xs font-medium uppercase tracking-wide text-ink-tertiary">Description (optional)</label>
               <textarea
                 {...register('description')}
                 rows={3}
-                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md"
+                className="mt-1 block w-full px-3 py-2 border border-edge dark:border-dark-border rounded text-sm dark:bg-dark-bg dark:text-dark-text focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent"
                 placeholder="Explain your code..."
               />
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700">
-                Image (optional)
-              </label>
+              <label className="text-xs font-medium uppercase tracking-wide text-ink-tertiary">Image (optional)</label>
               <input
                 type="file"
                 accept="image/*"
                 onChange={(e) => setImage(e.target.files?.[0] || null)}
-                className="mt-1 block w-full"
+                className="mt-1 block w-full text-sm text-ink-secondary"
               />
             </div>
 
-            <div className="flex justify-end space-x-3 pt-4">
+            <div className="flex justify-end gap-3 pt-4 border-t border-edge-light dark:border-dark-border">
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2 text-gray-700 hover:text-gray-900"
+                className="px-4 py-2 text-sm text-ink-secondary hover:text-ink transition-colors"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+                className="px-4 py-2 bg-accent text-white rounded text-sm hover:bg-accent-hover disabled:opacity-50 transition-colors"
               >
                 {isSubmitting ? 'Posting...' : 'Post'}
               </button>

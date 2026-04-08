@@ -242,7 +242,6 @@ router.post('/logout', authenticate, async (req: Request, res: Response, next: N
       throw new ApiError('User not found', 401);
     }
 
-    // Clear refresh token
     await User.findByIdAndUpdate(req.user._id, { refreshToken: null });
 
     res.json({ message: 'Logout successful' });
