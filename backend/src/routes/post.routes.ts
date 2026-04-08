@@ -176,6 +176,10 @@ router.post(
       }
 
       const { title, code, language, description } = validation.data;
+      let files = req.body.files;
+      if (typeof files === 'string') {
+        try { files = JSON.parse(files); } catch { files = undefined; }
+      }
 
       const post = new Post({
         userId: req.user!._id,
@@ -184,6 +188,7 @@ router.post(
         language: language.toLowerCase(),
         description,
         image: req.file ? `/uploads/${req.file.filename}` : null,
+        ...(files && typeof files === 'object' ? { files } : {}),
       });
 
       await post.save();

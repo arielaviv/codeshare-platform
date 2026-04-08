@@ -8,6 +8,7 @@ export interface IPost extends Document {
   language: string;
   description?: string;
   image?: string;
+  files?: Map<string, string>;
   aiExplanation?: string;
   likesCount: number;
   commentsCount: number;
@@ -47,6 +48,11 @@ const postSchema = new Schema<IPost>(
     image: {
       type: String,
       default: null,
+    },
+    files: {
+      type: Map,
+      of: String,
+      default: undefined,
     },
     aiExplanation: {
       type: String,
