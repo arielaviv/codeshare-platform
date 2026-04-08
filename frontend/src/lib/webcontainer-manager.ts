@@ -91,10 +91,12 @@ class WebContainerManager {
 
     const filesWithEnv = new Map(files);
     if (!filesWithEnv.has('.env')) {
-      filesWithEnv.set('.env', [
-        'VITE_MAPBOX_TOKEN=${import.meta.env.VITE_MAPBOX_TOKEN}',
-        'VITE_ANTHROPIC_API_KEY=${import.meta.env.VITE_ANTHROPIC_API_KEY}',
-      ].join('\n') + '\n');
+      const envLines: string[] = [];
+      const mapboxToken = import.meta.env.VITE_MAPBOX_TOKEN;
+      const anthropicKey = import.meta.env.VITE_ANTHROPIC_API_KEY;
+      if (mapboxToken) envLines.push(`VITE_MAPBOX_TOKEN=${mapboxToken}`);
+      if (anthropicKey) envLines.push(`VITE_ANTHROPIC_API_KEY=${anthropicKey}`);
+      if (envLines.length > 0) filesWithEnv.set('.env', envLines.join('\n') + '\n');
     }
 
     const tree = mapToFileSystemTree(filesWithEnv);
