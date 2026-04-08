@@ -38,3 +38,8 @@ coverage/
 
 # Project notes
 claude.md
+.claude/
+backend/uploads/*.png
+backend/uploads/*.jpg
+*.env
+.env.local

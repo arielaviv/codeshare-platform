@@ -20,7 +20,7 @@ export const generateAccessToken = (userId: Types.ObjectId, username: string): s
   return jwt.sign(
     { userId: userId.toString(), username },
     JWT_SECRET,
-    { expiresIn: JWT_EXPIRES_IN }
+    { expiresIn: JWT_EXPIRES_IN } as jwt.SignOptions
   );
 };
 
@@ -28,7 +28,7 @@ export const generateRefreshToken = (userId: Types.ObjectId, username: string): 
   return jwt.sign(
     { userId: userId.toString(), username },
     JWT_REFRESH_SECRET,
-    { expiresIn: JWT_REFRESH_EXPIRES_IN }
+    { expiresIn: JWT_REFRESH_EXPIRES_IN } as jwt.SignOptions
   );
 };
 
