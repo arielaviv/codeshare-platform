@@ -4,6 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import api from '../services/api';
 import CodeEditor from './CodeEditor';
+import type { PrizeAward } from '../types';
 
 const postSchema = z.object({
   title: z.string().min(1, 'Title required').max(200),
@@ -17,9 +18,10 @@ type PostForm = z.infer<typeof postSchema>;
 interface Props {
   onClose: () => void;
   onSuccess: () => void;
+  onPrizeAwarded?: (prize: PrizeAward) => void;
 }
 
-export default function CreatePostModal({ onClose, onSuccess }: Props) {
+export default function CreatePostModal({ onClose, onSuccess, onPrizeAwarded }: Props) {
   const [image, setImage] = useState<File | null>(null);
   const [error, setError] = useState('');
 
@@ -47,9 +49,12 @@ export default function CreatePostModal({ onClose, onSuccess }: Props) {
       if (data.description) formData.append('description', data.description);
       if (image) formData.append('image', image);
 
-      await api.post('/posts', formData, {
+      const { data: responseData } = await api.post('/posts', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
+      if (responseData?.prize && onPrizeAwarded) {
+        onPrizeAwarded(responseData.prize as PrizeAward);
+      }
       onSuccess();
     } catch (err: unknown) {
       const error = err as { response?: { data?: { message?: string } } };
