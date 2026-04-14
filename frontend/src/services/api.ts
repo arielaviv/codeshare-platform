@@ -1,6 +1,15 @@
 import axios from 'axios';
+import type {
+  Deck,
+  DeckListResponse,
+  DeckDetailResponse,
+  ClassifyIntentResponse,
+} from '../types/deck';
+import type { PrizeAward } from '../types';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+
+export { API_URL };
 
 const api = axios.create({
   baseURL: API_URL,
@@ -50,5 +59,30 @@ api.interceptors.response.use(
     return Promise.reject(error);
   }
 );
+
+export const decksAPI = {
+  list: (page = 1, limit = 20): Promise<DeckListResponse> =>
+    api.get(`/decks?page=${page}&limit=${limit}`).then((r) => r.data),
+
+  get: (deckId: string): Promise<DeckDetailResponse> =>
+    api.get(`/decks/${deckId}`).then((r) => r.data),
+
+  create: (payload: Partial<Deck>): Promise<{ message: string; deck: Deck; prize?: PrizeAward }> =>
+    api.post('/decks', payload).then((r) => r.data),
+
+  update: (
+    deckId: string,
+    payload: Partial<Deck>
+  ): Promise<{ message: string; deck: Deck }> =>
+    api.put(`/decks/${deckId}`, payload).then((r) => r.data),
+
+  remove: (deckId: string): Promise<{ message: string }> =>
+    api.delete(`/decks/${deckId}`).then((r) => r.data),
+};
+
+export const intentAPI = {
+  classify: (prompt: string): Promise<ClassifyIntentResponse> =>
+    api.post('/ai/classify-intent', { prompt }).then((r) => r.data),
+};
 
 export default api;
