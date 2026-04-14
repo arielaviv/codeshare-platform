@@ -1,0 +1,5 @@
+template_name = "mr8-desktop"
+dockerfile = "e2b.Dockerfile"
+cpu_count = 4
+memory_mb = 4096
+start_cmd = "/usr/bin/google-chrome --remote-debugging-port=9222 --remote-debugging-address=0.0.0.0 --no-first-run --disable-dev-shm-usage &"

@@ -1,0 +1,5 @@
+template_name = "mr8-compute"
+dockerfile = "e2b.Dockerfile"
+cpu_count = 2
+memory_mb = 2048
+start_cmd = ""
