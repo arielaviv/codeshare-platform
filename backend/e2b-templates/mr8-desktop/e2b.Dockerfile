@@ -8,15 +8,17 @@ RUN apt-get update && apt-get install -y \
     fonts-noto-extra \
     fonts-noto-hinted \
     fonts-noto-unhinted \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Versions compatible with trafilatura 1.12.x (lxml >= 5.3) and playwright 1.48+.
 RUN pip install --no-cache-dir \
-    playwright==1.44.0 \
-    trafilatura==1.9.0 \
+    playwright==1.48.0 \
+    trafilatura==1.12.2 \
     readability-lxml==0.8.1 \
-    httpx==0.27.0 \
+    httpx==0.27.2 \
     beautifulsoup4==4.12.3 \
-    lxml==5.2.2
+    lxml==5.3.0
 
 RUN playwright install chromium && playwright install-deps chromium
 
