@@ -58,7 +58,8 @@ const WIN_TAIL_MS = 400;
 const COUNTER_DURATION_MS = 1100;
 
 interface Props {
-  outcomes: [SpinOutcome, SpinOutcome];
+  outcomes?: [SpinOutcome, SpinOutcome];
+  overrideOutcomes?: [SpinOutcome, SpinOutcome];
   awardedCents: number;
   reduced?: boolean;
   onWinReveal: () => void;
@@ -68,10 +69,12 @@ type Phase = 'spin1' | 'near-miss' | 'spin2' | 'win' | 'done';
 
 export default function SlotMachine({
   outcomes,
+  overrideOutcomes,
   awardedCents,
   reduced,
   onWinReveal,
 }: Props) {
+  const effectiveOutcomes = overrideOutcomes ?? outcomes;
   const [phase, setPhase] = useState<Phase>('spin1');
   const [counter, setCounter] = useState(0);
   const reelRefs = [
@@ -101,6 +104,7 @@ export default function SlotMachine({
   };
 
   useEffect(() => {
+    if (!effectiveOutcomes) return;
     if (reduced) {
       setPhase('done');
       setCounter(awardedCents);
@@ -111,7 +115,7 @@ export default function SlotMachine({
     const timers: ReturnType<typeof setTimeout>[] = [];
 
     // Spin 1 starts on mount
-    requestAnimationFrame(() => applySpin(outcomes[0].symbols));
+    requestAnimationFrame(() => applySpin(effectiveOutcomes[0].symbols));
 
     // Show near-miss banner after reel 3 settles
     timers.push(setTimeout(() => setPhase('near-miss'), REEL_STOP_MS[2] + 150));
@@ -124,7 +128,7 @@ export default function SlotMachine({
         resetReels();
         // two rAFs so the reset transition actually applies before the animation resumes
         requestAnimationFrame(() =>
-          requestAnimationFrame(() => applySpin(outcomes[1].symbols))
+          requestAnimationFrame(() => applySpin(effectiveOutcomes[1].symbols))
         );
       }, spin2Start)
     );

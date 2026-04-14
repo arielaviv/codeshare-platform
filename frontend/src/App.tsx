@@ -1,6 +1,8 @@
+import { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
 import { ComputerProvider } from './contexts/ComputerContext';
+import { PrizeOrchestratorProvider } from './contexts/PrizeOrchestratorContext';
 import { FloatingThumbnail, TakeoverHost } from './components/computer';
 import AppLayout from './components/AppLayout';
 import LandingPage from './pages/LandingPage';
@@ -20,6 +22,10 @@ import PricingPage from './pages/PricingPage';
 import AccountPage from './pages/AccountPage';
 import AnonBuildPage from './pages/AnonBuildPage';
 
+const DebugPrizeOrchestratorPage = import.meta.env.DEV
+  ? lazy(() => import('./pages/DebugPrizeOrchestratorPage'))
+  : null;
+
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { user, loading } = useAuth();
   if (loading) return <div className="flex justify-center items-center h-screen bg-[#0A0A0A]"><div className="skeleton w-8 h-8 rounded-full" /></div>;
@@ -36,50 +42,63 @@ function SmartHome() {
 function App() {
   return (
     <ComputerProvider>
-      <Routes>
-        <Route path="/landing" element={<LandingPage />} />
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/register" element={<RegisterPage />} />
-        <Route path="/auth/callback" element={<AuthCallback />} />
-        <Route path="/pricing" element={<PricingPage />} />
-        <Route path="/account" element={<ProtectedRoute><AccountPage /></ProtectedRoute>} />
-        <Route path="/build" element={<AnonBuildPage />} />
-        <Route
-          path="/welcome-spin"
-          element={<ProtectedRoute><WelcomeSpinPage /></ProtectedRoute>}
-        />
+      <PrizeOrchestratorProvider>
+        <Routes>
+          <Route path="/landing" element={<LandingPage />} />
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
+          <Route path="/auth/callback" element={<AuthCallback />} />
+          <Route path="/pricing" element={<PricingPage />} />
+          <Route path="/account" element={<ProtectedRoute><AccountPage /></ProtectedRoute>} />
+          <Route path="/build" element={<AnonBuildPage />} />
+          <Route
+            path="/welcome-spin"
+            element={<ProtectedRoute><WelcomeSpinPage /></ProtectedRoute>}
+          />
 
-        <Route element={<AppLayout />}>
-          <Route path="/" element={<SmartHome />} />
-          <Route path="/feed" element={<HomePage />} />
-          <Route path="/post/:id" element={<PostDetailPage />} />
-          <Route path="/project/:id" element={<ProjectViewPage />} />
-          <Route
-            path="/chat"
-            element={<ProtectedRoute><AIChatPage /></ProtectedRoute>}
-          />
-          <Route
-            path="/profile/:id"
-            element={<ProtectedRoute><ProfilePage /></ProtectedRoute>}
-          />
-          <Route
-            path="/decks"
-            element={<ProtectedRoute><DecksPage /></ProtectedRoute>}
-          />
-          <Route
-            path="/decks/:id"
-            element={<ProtectedRoute><DeckEditorPage /></ProtectedRoute>}
-          />
-        </Route>
+          <Route element={<AppLayout />}>
+            <Route path="/" element={<SmartHome />} />
+            <Route path="/feed" element={<HomePage />} />
+            <Route path="/post/:id" element={<PostDetailPage />} />
+            <Route path="/project/:id" element={<ProjectViewPage />} />
+            <Route
+              path="/chat"
+              element={<ProtectedRoute><AIChatPage /></ProtectedRoute>}
+            />
+            <Route
+              path="/profile/:id"
+              element={<ProtectedRoute><ProfilePage /></ProtectedRoute>}
+            />
+            <Route
+              path="/decks"
+              element={<ProtectedRoute><DecksPage /></ProtectedRoute>}
+            />
+            <Route
+              path="/decks/:id"
+              element={<ProtectedRoute><DeckEditorPage /></ProtectedRoute>}
+            />
+          </Route>
 
-        <Route
-          path="/decks/:id/preview"
-          element={<ProtectedRoute><DeckPreviewPage /></ProtectedRoute>}
-        />
-        <Route path="/decks/:id/public" element={<DeckPreviewPage />} />
-      </Routes>
-      <FloatingThumbnail />
-      <TakeoverHost />
+          <Route
+            path="/decks/:id/preview"
+            element={<ProtectedRoute><DeckPreviewPage /></ProtectedRoute>}
+          />
+          <Route path="/decks/:id/public" element={<DeckPreviewPage />} />
+
+          {DebugPrizeOrchestratorPage ? (
+            <Route
+              path="/debug/prize-orchestrator"
+              element={
+                <Suspense fallback={<div className="p-8 text-white">Loading…</div>}>
+                  <DebugPrizeOrchestratorPage />
+                </Suspense>
+              }
+            />
+          ) : null}
+        </Routes>
+        <FloatingThumbnail />
+        <TakeoverHost />
+      </PrizeOrchestratorProvider>
     </ComputerProvider>
   );
 }
