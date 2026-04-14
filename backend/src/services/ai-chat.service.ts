@@ -3,7 +3,7 @@ import type { MessageParam, ContentBlock } from '@anthropic-ai/sdk/resources/mes
 import { platformToolDefinitions, executePlatformTool, type PlatformToolInput } from './platform-tools';
 import type { ChatMessage, ChatResponse, ToolUseRecord } from '../types/chat';
 
-const SYSTEM_PROMPT = `You are CodeShare AI, an intelligent assistant for the CodeShare developer learning platform.
+const SYSTEM_PROMPT = `You are Mr8 AI, an intelligent assistant for the Mr8 developer learning platform.
 
 Your capabilities:
 - Search and discover code snippets shared by the community
