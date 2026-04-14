@@ -10,6 +10,9 @@ export interface IUser extends Document {
   profileImage?: string;
   bio?: string;
   refreshToken?: string;
+  creditsCents: number;
+  hasClaimedWelcomeBonus: boolean;
+  milestonesClaimed: string[];
   createdAt: Date;
   updatedAt: Date;
   comparePassword(candidatePassword: string): Promise<boolean>;
@@ -54,6 +57,19 @@ const userSchema = new Schema<IUser>(
     refreshToken: {
       type: String,
       select: false,
+    },
+    creditsCents: {
+      type: Number,
+      default: 0,
+      min: [0, 'Credits cannot be negative'],
+    },
+    hasClaimedWelcomeBonus: {
+      type: Boolean,
+      default: false,
+    },
+    milestonesClaimed: {
+      type: [String],
+      default: [],
     },
   },
   {

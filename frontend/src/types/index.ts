@@ -4,6 +4,8 @@ export interface User {
   email: string;
   profileImage?: string;
   bio?: string;
+  creditsCents: number;
+  hasClaimedWelcomeBonus: boolean;
 }
 
 export interface Post {
@@ -60,12 +62,19 @@ export interface ChatResponse {
   toolsUsed: ToolUsed[];
 }
 
+export interface PrizeAward {
+  amountCents: number;
+  newBalanceCents: number;
+  reason: string;
+}
+
 export interface AgentSSEHandlers {
   onTextDelta: (content: string) => void;
   onFileWrite: (path: string, content: string) => void;
   onFileDelete: (path: string) => void;
   onToolCall: (name: string, input: Record<string, unknown>) => void;
   onToolResult: (name: string, preview: string) => void;
+  onPrizeAwarded?: (prize: PrizeAward) => void;
   onError: (message: string) => void;
   onDone: (filesModified: string[]) => void;
 }

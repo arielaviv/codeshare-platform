@@ -2,8 +2,18 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import api from '../services/api';
+import confetti from 'canvas-confetti';
+import api, { intentAPI } from '../services/api';
 import { streamAgent } from '../services/agentStream';
+import { requestResearch } from '../services/researchStream';
+import GenerateDeckModal from '../components/decks/GenerateDeckModal';
+import PrizeModal from '../components/PrizeModal';
+import type { PrizeAward } from '../types';
+import { useAuth } from '../contexts/AuthContext';
+import { useComputer } from '../contexts/ComputerContext';
+import { useComputerStream } from '../hooks/useComputerStream';
+import { ComputerPanel } from '../components/computer';
+import type { ResearchBrief } from '../types/deck';
 import WorkspacePanel from '../components/WorkspacePanel';
 import PreviewPanel from '../components/PreviewPanel';
 import ActionCard from '../components/ActionCard';
@@ -74,6 +84,15 @@ export default function AIChatPage() {
   const [actionExpanded, setActionExpanded] = useState(true);
   const [terminalLogs, setTerminalLogs] = useState('');
   const [showSettings, setShowSettings] = useState(false);
+  const [deckConfirm, setDeckConfirm] = useState<{ prompt: string; confidence: number } | null>(null);
+  const [deckModalPrompt, setDeckModalPrompt] = useState<string | null>(null);
+  const [deckModalBrief, setDeckModalBrief] = useState<ResearchBrief | undefined>(undefined);
+  const [forceMode, setForceMode] = useState<'auto' | 'code' | 'deck' | 'computer'>('auto');
+  const [researching, setResearching] = useState<string | null>(null);
+  const [prize, setPrize] = useState<PrizeAward | null>(null);
+  const { refreshUser } = useAuth();
+  const computerCtx = useComputer();
+  const { start: startComputer } = useComputerStream();
 
   const workspace = useWorkspace(sessionId);
   const [recentFiles, setRecentFiles] = useState<Set<string>>(new Set());
@@ -103,10 +122,7 @@ export default function AIChatPage() {
     });
   }, []);
 
-  const sendMessage = useCallback(async (text: string) => {
-    const trimmed = text.trim();
-    if (!trimmed || loading) return;
-
+  const runCodeFlow = useCallback((trimmed: string) => {
     if (!projectName) setProjectName(trimmed.slice(0, 50));
 
     const userMsg: DisplayMessage = { id: `user-${Date.now()}`, role: 'user', content: trimmed };
@@ -164,6 +180,23 @@ export default function AIChatPage() {
         }
       },
       onToolResult() {},
+      onPrizeAwarded(award) {
+        const colors = ['#FB7701', '#FFB800', '#FFFFFF', '#FF9A3C', '#0B8800'];
+        confetti({
+          particleCount: 200,
+          spread: 110,
+          startVelocity: 55,
+          origin: { y: 0.55 },
+          colors,
+          scalar: 1.2,
+        });
+        setTimeout(() => {
+          confetti({ particleCount: 80, angle: 60, spread: 70, origin: { x: 0.1, y: 0.6 }, colors });
+          confetti({ particleCount: 80, angle: 120, spread: 70, origin: { x: 0.9, y: 0.6 }, colors });
+        }, 200);
+        setPrize(award);
+        refreshUser();
+      },
       onError(message) {
         if (!textContent) {
           textContent = message;
@@ -191,13 +224,159 @@ export default function AIChatPage() {
     }, selectedModel);
   }, [loading, messages, workspace, projectName, selectedModel]);
 
+  const runComputerFlow = useCallback((trimmed: string) => {
+    const userMsg: DisplayMessage = { id: `user-${Date.now()}`, role: 'user', content: trimmed };
+    setMessages((prev) => [...prev, userMsg]);
+    setInput('');
+    setLoading(true);
+    computerCtx.setMode('compact');
+
+    const assistantId = `assistant-${Date.now()}`;
+    let textContent = '';
+    setMessages((prev) => [...prev, { id: assistantId, role: 'assistant', content: '', toolsUsed: [] }]);
+
+    const allMsgs = [...messages, userMsg];
+    const history: ChatMessage[] = allMsgs.map((m) => ({ role: m.role, content: m.content }));
+
+    startComputer({
+      messages: history,
+      workspace: workspace.toRecord(),
+      model: selectedModel,
+      onTextDelta(text) {
+        textContent += text;
+        setMessages((prev) => prev.map((m) => m.id === assistantId ? { ...m, content: textContent } : m));
+      },
+      onError(message) {
+        if (!textContent) {
+          textContent = message;
+          setMessages((prev) => prev.map((m) => m.id === assistantId ? { ...m, content: textContent } : m));
+        }
+      },
+      onDone() {
+        setLoading(false);
+      },
+    });
+  }, [messages, workspace, selectedModel, computerCtx, startComputer]);
+
+  const runDeckWithResearch = useCallback(async (trimmed: string, researchQuery: string) => {
+    setInput('');
+    setResearching(researchQuery);
+    computerCtx.setMode('compact');
+
+    const userMsg: DisplayMessage = { id: `user-${Date.now()}`, role: 'user', content: trimmed };
+    const notice: DisplayMessage = {
+      id: `notice-${Date.now()}`,
+      role: 'assistant',
+      content: `Researching "${researchQuery}" before building your deck…`,
+    };
+    setMessages((prev) => [...prev, userMsg, notice]);
+
+    try {
+      const brief = await requestResearch(researchQuery);
+      setResearching(null);
+      setDeckModalPrompt(trimmed);
+      setDeckModalBrief(brief ?? undefined);
+    } catch {
+      setResearching(null);
+      setDeckModalPrompt(trimmed);
+      setDeckModalBrief(undefined);
+    }
+  }, [computerCtx]);
+
+  const sendMessage = useCallback(async (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed || loading) return;
+
+    // Explicit overrides via the mode toggle
+    if (forceMode === 'deck') {
+      setDeckModalPrompt(trimmed);
+      setDeckModalBrief(undefined);
+      setInput('');
+      return;
+    }
+    if (forceMode === 'code') {
+      runCodeFlow(trimmed);
+      return;
+    }
+    if (forceMode === 'computer') {
+      runComputerFlow(trimmed);
+      return;
+    }
+
+    // Auto-classify the first message; once conversation has started, stay in code mode.
+    if (messages.length === 0) {
+      try {
+        const result = await intentAPI.classify(trimmed);
+        if (result.intent === 'computer' && result.confidence > 0.6) {
+          runComputerFlow(trimmed);
+          return;
+        }
+        if (result.intent === 'deck' && result.confidence > 0.7) {
+          if (result.needsResearch && result.researchQuery) {
+            await runDeckWithResearch(trimmed, result.researchQuery);
+            return;
+          }
+          setDeckConfirm({ prompt: trimmed, confidence: result.confidence });
+          return;
+        }
+      } catch {
+        // Intent service is best-effort — fall through to code flow.
+      }
+    }
+
+    runCodeFlow(trimmed);
+  }, [loading, forceMode, messages.length, runCodeFlow, runComputerFlow, runDeckWithResearch]);
+
   useEffect(() => {
+    if (initialPromptRef.current) return;
+
+    // 1) Highest priority: an adopted anonymous build handed off via sessionStorage.
+    // We hydrate the workspace + show the user/assistant messages as if the
+    // conversation had already happened, without spending a second API call.
+    try {
+      const raw = sessionStorage.getItem('mr8-adopted-build');
+      if (raw) {
+        const parsed = JSON.parse(raw) as {
+          prompt: string;
+          files: Record<string, string>;
+          assistantText: string;
+          awardedCents: number;
+        };
+        initialPromptRef.current = true;
+        sessionStorage.removeItem('mr8-adopted-build');
+
+        Object.entries(parsed.files || {}).forEach(([path, content]) => {
+          workspace.setFile(path, content);
+        });
+        setProjectName(parsed.prompt.slice(0, 50));
+        setRightTab('preview');
+
+        const uid = `user-${Date.now()}`;
+        const aid = `assistant-${Date.now() + 1}`;
+        setMessages([
+          { id: uid, role: 'user', content: parsed.prompt },
+          {
+            id: aid,
+            role: 'assistant',
+            content:
+              parsed.assistantText ||
+              'Your preview is live. Say what you want to change and I will extend it.',
+            toolsUsed: [],
+          },
+        ]);
+        return;
+      }
+    } catch {
+      // Malformed handoff — fall through to normal flow
+    }
+
+    // 2) Normal navigation: initialPrompt in location state → send it through the agent.
     const state = location.state as { initialPrompt?: string } | null;
-    if (state?.initialPrompt && !initialPromptRef.current) {
+    if (state?.initialPrompt) {
       initialPromptRef.current = true;
       sendMessage(state.initialPrompt);
     }
-  }, [location.state, sendMessage]);
+  }, [location.state, sendMessage, workspace]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -232,7 +411,7 @@ export default function AIChatPage() {
     formData.append('title', projectName || 'Generated App');
     formData.append('code', mainFile.slice(0, 10000));
     formData.append('language', lang);
-    formData.append('description', 'Built with CodeShare AI');
+    formData.append('description', 'Built with Mr8 AI');
     formData.append('files', JSON.stringify(workspace.toRecord()));
     await api.post('/posts', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
     navigate('/feed');
@@ -290,7 +469,7 @@ export default function AIChatPage() {
               </button>
               <button
                 onClick={handleShare}
-                className="px-3 py-1.5 text-xs text-[#E8E8E8] bg-[#3B82F6] hover:bg-[#2563EB] rounded-md transition-colors"
+                className="px-3 py-1.5 text-xs text-white bg-brand-orange hover:bg-brand-orange-hover rounded-md transition-colors font-medium"
               >
                 Share
               </button>
@@ -366,14 +545,14 @@ export default function AIChatPage() {
             )}
           </div>
 
-          <div className="p-4 flex-shrink-0">
+          <div className="p-4 flex-shrink-0 space-y-2.5">
             <div className="bg-[#1A1A1A] border border-[#333] rounded-xl overflow-hidden">
               <textarea
                 ref={textareaRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="How can CodeShare help you today?"
+                placeholder={forceMode === 'deck' ? 'Describe the deck you want…' : 'How can Mr8 help you today?'}
                 rows={1}
                 className="w-full px-4 py-3 bg-transparent text-[#E8E8E8] text-sm resize-none focus:outline-none placeholder:text-[#555] max-h-[200px]"
               />
@@ -388,53 +567,93 @@ export default function AIChatPage() {
                     <option value="claude-sonnet-4-6">Sonnet 4.6</option>
                     <option value="claude-opus-4-6">Opus 4.6</option>
                   </select>
+                  <select
+                    value={forceMode}
+                    onChange={(e) => setForceMode(e.target.value as 'auto' | 'code' | 'deck' | 'computer')}
+                    className="text-[11px] bg-[#141414] border border-[#2A2A2A] text-[#888] rounded px-2 py-1 focus:outline-none focus:border-[#444] cursor-pointer"
+                    title="Choose how Claude should respond"
+                  >
+                    <option value="auto">Auto</option>
+                    <option value="code">Code app</option>
+                    <option value="deck">Slide deck</option>
+                    <option value="computer">Mr8 Computer</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const t = input.trim();
+                      if (!t || loading) return;
+                      runComputerFlow(t);
+                    }}
+                    disabled={loading || !input.trim()}
+                    className="text-[11px] bg-[#141414] border border-[#2A2A2A] text-[#FFB229] rounded px-2 py-1 focus:outline-none hover:border-[#FFB229] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
+                    title="Run this prompt through Mr8 Computer (browser + Python sandbox)"
+                  >
+                    Use Mr8 Computer
+                  </button>
                 </div>
-                <button
-                  onClick={() => sendMessage(input)}
-                  disabled={loading || !input.trim()}
-                  className="w-8 h-8 bg-[#3B82F6] hover:bg-[#2563EB] disabled:bg-[#333] disabled:cursor-not-allowed rounded-lg flex items-center justify-center transition-colors"
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
-                    <path d="M12 19V5M5 12l7-7 7 7" />
-                  </svg>
-                </button>
               </div>
             </div>
+            <button
+              onClick={() => sendMessage(input)}
+              disabled={loading || !input.trim()}
+              className="w-full py-3.5 bg-brand-orange hover:bg-brand-orange-hover disabled:bg-[#2A2A2A] disabled:text-[#666] disabled:cursor-not-allowed rounded-full text-white text-sm font-semibold transition-colors flex items-center justify-center gap-2 shadow-[0_4px_14px_rgba(251,119,1,0.35)] disabled:shadow-none"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="M5 12h14m-7-7l7 7-7 7" />
+              </svg>
+              {loading ? 'Working…' : forceMode === 'deck' ? 'Generate deck' : 'Send'}
+            </button>
           </div>
         </div>
 
         <div className="flex-1 flex flex-col min-w-0 bg-[#0A0A0A]">
-          <div className="flex items-center gap-1 px-3 py-2 border-b border-[#1A1A1A] flex-shrink-0">
-            {(['code', 'preview'] as const).map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setRightTab(tab)}
-                className={`px-3 py-1 text-sm rounded transition-colors ${
-                  rightTab === tab
-                    ? 'text-[#E8E8E8] bg-[#1A1A1A]'
-                    : 'text-[#666] hover:text-[#A0A0A0]'
-                }`}
-              >
-                {tab.charAt(0).toUpperCase() + tab.slice(1)}
-              </button>
-            ))}
-          </div>
+          {computerCtx.state.panel.mode === 'expanded' ? (
+            <ComputerPanel />
+          ) : (
+            <>
+              <div className="flex items-center gap-1 px-3 py-2 border-b border-[#1A1A1A] flex-shrink-0">
+                {(['code', 'preview'] as const).map((tab) => (
+                  <button
+                    key={tab}
+                    onClick={() => setRightTab(tab)}
+                    className={`px-3 py-1 text-sm rounded transition-colors ${
+                      rightTab === tab
+                        ? 'text-brand-orange bg-[#1A1A1A] font-semibold'
+                        : 'text-[#666] hover:text-[#A0A0A0]'
+                    }`}
+                  >
+                    {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                  </button>
+                ))}
+                {computerCtx.state.timeline.length > 0 && (
+                  <button
+                    onClick={() => computerCtx.setMode('expanded')}
+                    className="ml-auto px-3 py-1 text-xs rounded text-[#FFB229] hover:bg-[#1A1A1A] transition-colors"
+                    title="Show Mr8 Computer activity"
+                  >
+                    Mr8 Computer ({computerCtx.state.timeline.length}) ↗
+                  </button>
+                )}
+              </div>
 
-          <div className="flex-1 min-h-0">
-            {rightTab === 'code' ? (
-              <WorkspacePanel
-                workspace={workspace}
-                recentFiles={recentFiles}
-                terminalLogs={terminalLogs}
-              />
-            ) : (
-              <PreviewPanel
-                files={workspace.files}
-                isGenerating={loading}
-                fallbackHtml={workspace.previewHtml}
-              />
-            )}
-          </div>
+              <div className="flex-1 min-h-0">
+                {rightTab === 'code' ? (
+                  <WorkspacePanel
+                    workspace={workspace}
+                    recentFiles={recentFiles}
+                    terminalLogs={terminalLogs}
+                  />
+                ) : (
+                  <PreviewPanel
+                    files={workspace.files}
+                    isGenerating={loading}
+                    fallbackHtml={workspace.previewHtml}
+                  />
+                )}
+              </div>
+            </>
+          )}
         </div>
       </div>
 
@@ -445,6 +664,79 @@ export default function AIChatPage() {
           onClose={() => setShowSettings(false)}
         />
       )}
+
+      {deckConfirm && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+          <div className="bg-[#141414] border border-[#2A2A2A] rounded-lg w-full max-w-md p-5">
+            <div className="text-sm font-semibold text-[#E8E8E8] mb-1">
+              Looks like you want slides, not an app
+            </div>
+            <div className="text-xs text-[#888] mb-4">
+              Mr8 can generate a full Gartner-style deck from this prompt. Or continue building it as a code app.
+            </div>
+            <div className="bg-[#0A0A0A] border border-[#2A2A2A] rounded p-3 text-xs text-[#A0A0A0] mb-4 max-h-32 overflow-y-auto">
+              {deckConfirm.prompt}
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const prompt = deckConfirm.prompt;
+                  setDeckConfirm(null);
+                  runCodeFlow(prompt);
+                }}
+                className="px-3 py-1.5 text-xs text-[#A0A0A0] hover:text-[#E8E8E8]"
+              >
+                Build as app
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const prompt = deckConfirm.prompt;
+                  setDeckConfirm(null);
+                  setInput('');
+                  setDeckModalPrompt(prompt);
+                }}
+                className="px-4 py-1.5 text-xs bg-brand-orange hover:bg-brand-orange-hover text-white rounded-full font-semibold flex items-center gap-1.5 shadow-[0_2px_8px_rgba(251,119,1,0.4)]"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 2L15 9L22 10L17 15L18 22L12 19L6 22L7 15L2 10L9 9L12 2z" />
+                </svg>
+                Generate deck
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deckModalPrompt && (
+        <GenerateDeckModal
+          initialTopic={deckModalPrompt}
+          researchBrief={deckModalBrief}
+          onClose={() => {
+            setDeckModalPrompt(null);
+            setDeckModalBrief(undefined);
+          }}
+          onComplete={(deckId) => {
+            setDeckModalPrompt(null);
+            setDeckModalBrief(undefined);
+            navigate(`/decks/${deckId}`);
+          }}
+        />
+      )}
+
+      {researching && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 bg-[#141414] border border-[#FFB229] rounded-full px-5 py-2.5 shadow-[0_8px_24px_rgba(0,0,0,0.6)]">
+          <div className="flex items-center gap-3">
+            <div className="w-2 h-2 rounded-full bg-[#FFB229] animate-pulse" />
+            <span className="text-xs text-[#E8E8E8] font-mono">
+              Researching: {researching}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {prize && <PrizeModal prize={prize} onClose={() => setPrize(null)} />}
     </div>
   );
 }

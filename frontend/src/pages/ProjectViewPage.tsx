@@ -6,6 +6,7 @@ import WorkspacePanel from '../components/WorkspacePanel';
 import PreviewPanel from '../components/PreviewPanel';
 import { useWorkspace } from '../hooks/useWorkspace';
 import type { Post } from '../types';
+import mr8Logo from '../assets/mr8-logo.png';
 
 export default function ProjectViewPage() {
   const { id } = useParams<{ id: string }>();
@@ -45,11 +46,7 @@ export default function ProjectViewPage() {
     <div className="h-full flex flex-col bg-[#0A0A0A]">
       <div className="h-12 flex items-center justify-between px-4 border-b border-[#1A1A1A] bg-gradient-to-b from-[#0D1117] to-[#0A0A0A] flex-shrink-0">
         <div className="flex items-center gap-3">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#00EAFA" strokeWidth="2">
-            <polyline points="16 18 22 12 16 6" />
-            <polyline points="8 6 2 12 8 18" />
-          </svg>
-          <span className="text-sm font-semibold text-[#E8E8E8]">CodeShare</span>
+          <img src={mr8Logo} alt="Mr8" width={24} height={24} className="rounded-md" />
         </div>
         <span className="text-sm text-[#A0A0A0]">{post?.title || 'Loading...'}</span>
         <div />

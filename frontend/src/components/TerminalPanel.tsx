@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import mr8Logo from '../assets/mr8-logo.png';
 
 function stripAnsi(text: string): string {
   return text.replace(/\x1B\[[0-9;]*[a-zA-Z]|\[[\d;]*[a-zA-Z]/g, '');
@@ -20,11 +21,9 @@ export default function TerminalPanel({ logs }: TerminalPanelProps) {
   return (
     <div className="flex flex-col h-full bg-[#0F0F0F]">
       <div className="flex items-center gap-1 px-2 py-1 bg-[#1A1A1A] border-t border-[#2A2A2A] flex-shrink-0">
-        <button className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] text-[#E8E8E8] bg-[#2A2A2A] rounded">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-          </svg>
-          CodeShare
+        <button className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] text-brand-orange bg-[#2A2A2A] rounded font-semibold">
+          <img src={mr8Logo} alt="" width={14} height={14} className="rounded-sm" />
+          Mr8
         </button>
         <button className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] text-[#666] hover:text-[#A0A0A0] rounded transition-colors">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

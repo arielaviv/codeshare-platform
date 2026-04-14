@@ -5,6 +5,7 @@ import { createPostSchema, updatePostSchema } from '../utils/validators';
 import { ApiError } from '../middleware/error.middleware';
 import { authenticate, optionalAuth } from '../middleware/auth.middleware';
 import { uploadSingle } from '../middleware/upload.middleware';
+import { checkAndAwardMilestone } from '../services/milestone.service';
 import fs from 'fs';
 import path from 'path';
 
@@ -194,9 +195,12 @@ router.post(
       await post.save();
       await post.populate('userId', 'username profileImage');
 
+      const prize = await checkAndAwardMilestone(req.user!._id, 'post');
+
       res.status(201).json({
         message: 'Post created successfully',
         post,
+        ...(prize ? { prize } : {}),
       });
     } catch (error) {
       next(error);

@@ -1,6 +1,8 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import LandingHeader from '../components/LandingHeader';
+import TycoonTrustBar from '../components/TycoonTrustBar';
 
 const SUGGESTIONS = [
   'Build a Porsche GT3 RS showcase with hero images',
@@ -18,105 +20,89 @@ export default function LandingPage() {
     e?.preventDefault();
     if (!prompt.trim()) return;
     if (user) {
-      navigate('/chat', { state: { initialPrompt: prompt } });
+      if (!user.hasClaimedWelcomeBonus) {
+        navigate('/welcome-spin', { state: { initialPrompt: prompt } });
+      } else {
+        navigate('/chat', { state: { initialPrompt: prompt } });
+      }
     } else {
-      navigate('/register', { state: { redirectPrompt: prompt } });
+      // Temu flow: unauth users go directly into an anonymous build. Register
+      // wall appears AFTER the build is running + the slot has been won —
+      // register-to-claim maximises sunk-cost.
+      navigate('/build', { state: { initialPrompt: prompt } });
     }
   };
 
   return (
-    <div className="h-screen bg-[#0A0A0A] text-[#E8E8E8] overflow-hidden flex flex-col">
-      <div className="fixed inset-0 bg-gradient-to-b from-[#0A0A0A] via-[#0A0A14] to-[#0A0A0A] pointer-events-none" />
-      <div className="fixed inset-0 opacity-[0.03] pointer-events-none" style={{
-        backgroundImage: 'radial-gradient(circle at 1px 1px, rgba(255,255,255,0.15) 1px, transparent 0)',
-        backgroundSize: '40px 40px',
-      }} />
+    <div className="min-h-screen bg-white dark:bg-[#0A0A0A] text-ink dark:text-[#E8E8E8] flex flex-col">
+      <LandingHeader />
 
-      <div className="relative z-10 flex flex-col h-full">
-        <nav className="flex items-center justify-between px-6 py-4 flex-shrink-0">
-          <div className="flex items-center gap-2.5">
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#00EAFA" strokeWidth="2">
-              <polyline points="16 18 22 12 16 6" />
-              <polyline points="8 6 2 12 8 18" />
+      {/* Subtle dot grid backdrop */}
+      <div
+        className="fixed inset-0 opacity-[0.04] dark:opacity-[0.06] pointer-events-none"
+        style={{
+          backgroundImage:
+            'radial-gradient(circle at 1px 1px, currentColor 1px, transparent 0)',
+          backgroundSize: '32px 32px',
+        }}
+      />
+
+      {/* Warm glow behind hero */}
+      <div
+        className="fixed inset-x-0 top-0 h-[70vh] pointer-events-none opacity-70"
+        style={{
+          background:
+            'radial-gradient(ellipse 60% 50% at 50% 0%, rgba(251, 119, 1, 0.18), transparent 65%)',
+        }}
+      />
+
+      <main className="relative z-10 flex-1 flex flex-col items-center justify-center px-6 py-10 text-center">
+        <TycoonTrustBar />
+
+        <h1 className="text-5xl md:text-7xl font-bold tracking-tight mb-8 leading-[1.04] text-ink dark:text-white">
+          Use AI like a Billionaire
+        </h1>
+
+        <form onSubmit={handleSubmit} className="max-w-2xl w-full mx-auto mb-5 space-y-3">
+          <div className="bg-white dark:bg-[#141414] border border-edge dark:border-[#2A2A2A] rounded-2xl shadow-[0_12px_40px_rgba(0,0,0,0.06)] dark:shadow-[0_12px_40px_rgba(0,0,0,0.5)] px-4 py-3 transition-colors focus-within:border-brand-orange dark:focus-within:border-brand-orange">
+            <textarea
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              placeholder="How can Mr8 help you today?"
+              rows={2}
+              className="w-full bg-transparent text-sm md:text-base text-ink dark:text-[#E8E8E8] placeholder:text-ink-tertiary dark:placeholder:text-[#555] focus:outline-none resize-none"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSubmit();
+                }
+              }}
+            />
+          </div>
+          <button
+            type="submit"
+            className="w-full py-3.5 bg-brand-orange hover:bg-brand-orange-hover rounded-full text-white text-sm font-semibold transition-colors flex items-center justify-center gap-2 shadow-[0_4px_14px_rgba(251,119,1,0.35)]"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M5 12h14m-7-7l7 7-7 7" />
             </svg>
-            <span className="text-lg font-bold tracking-tight">CodeShare</span>
-          </div>
-          <div className="flex items-center gap-3">
-            {user ? (
-              <Link to="/feed" className="text-sm bg-white text-[#0A0A0A] px-5 py-2.5 rounded-full font-medium hover:bg-[#E8E8E8] transition-colors">
-                Open App
-              </Link>
-            ) : (
-              <>
-                <Link to="/login" className="text-sm text-[#A0A0A0] hover:text-white transition-colors px-3 py-2">Login</Link>
-                <Link to="/register" className="text-sm bg-white text-[#0A0A0A] px-5 py-2.5 rounded-full font-medium hover:bg-[#E8E8E8] transition-colors">
-                  Get Started
-                </Link>
-              </>
-            )}
-          </div>
-        </nav>
+            Start building
+          </button>
+        </form>
 
-        <section className="flex-1 flex flex-col items-center justify-center px-6 text-center">
-          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-[#2A2A2A] bg-[#141414] text-xs text-[#A0A0A0] mb-6">
-            <span className="text-sm">🚀</span>
-            Introducing CodeShare AI
-          </div>
+        <div className="flex flex-wrap items-center justify-center gap-2 max-w-2xl">
+          {SUGGESTIONS.map((s) => (
+            <button
+              key={s}
+              onClick={() => setPrompt(s)}
+              className="text-xs px-4 py-2 rounded-full border border-edge dark:border-[#2A2A2A] bg-white dark:bg-[#0F0F0F] text-ink-secondary dark:text-[#888] hover:text-ink dark:hover:text-[#E8E8E8] hover:border-brand-orange/50 transition-colors"
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      </main>
 
-          <h1 className="text-5xl md:text-7xl font-bold tracking-tight mb-4 leading-[1.05]">
-            Build Stunning apps
-            <br />
-            <span className="bg-gradient-to-r from-[#00EAFA] via-[#3B82F6] to-[#8B5CF6] bg-clip-text text-transparent">effortlessly</span>
-          </h1>
-
-          <p className="text-base text-[#777] max-w-md mx-auto mb-8">
-            Describe your app and watch it come to life with React, TypeScript, and Tailwind.
-          </p>
-
-          <form onSubmit={handleSubmit} className="max-w-2xl w-full mx-auto mb-5">
-            <div className="flex items-center bg-[#141414] border border-[#2A2A2A] rounded-full px-4 py-2 hover:border-[#3A3A3A] transition-colors focus-within:border-[#555]">
-              <input
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                placeholder="How can CodeShare help you today?"
-                className="flex-1 bg-transparent text-sm text-[#E8E8E8] placeholder:text-[#555] focus:outline-none px-3 py-2"
-                onKeyDown={(e) => { if (e.key === 'Enter') handleSubmit(); }}
-              />
-              <button
-                type="submit"
-                disabled={!prompt.trim()}
-                className="w-9 h-9 bg-[#3B82F6] hover:bg-[#2563EB] disabled:bg-[#333] rounded-full flex items-center justify-center transition-colors flex-shrink-0"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
-                  <path d="M12 19V5M5 12l7-7 7 7" />
-                </svg>
-              </button>
-            </div>
-          </form>
-
-          <div className="flex flex-wrap items-center justify-center gap-2">
-            {SUGGESTIONS.map((s) => (
-              <button
-                key={s}
-                onClick={() => { setPrompt(s); }}
-                className="text-xs px-4 py-2 rounded-full border border-[#2A2A2A] bg-[#0F0F0F] text-[#888] hover:text-[#E8E8E8] hover:border-[#444] transition-colors"
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-        </section>
-
-        <footer className="px-6 py-4 flex items-center justify-between text-[10px] text-[#444] flex-shrink-0">
-          <div className="flex items-center gap-1.5">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#00EAFA" strokeWidth="2">
-              <polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" />
-            </svg>
-            CodeShare
-          </div>
-          <span>Ariel Aviv | Colman 2025</span>
-        </footer>
-      </div>
     </div>
   );
 }

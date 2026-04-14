@@ -80,6 +80,8 @@ router.post('/register', async (req: Request, res: Response, next: NextFunction)
         email: user.email,
         profileImage: user.profileImage,
         bio: user.bio,
+        creditsCents: user.creditsCents || 0,
+        hasClaimedWelcomeBonus: user.hasClaimedWelcomeBonus || false,
       },
       ...tokens,
     });
@@ -153,6 +155,8 @@ router.post('/login', async (req: Request, res: Response, next: NextFunction) =>
         email: user.email,
         profileImage: user.profileImage,
         bio: user.bio,
+        creditsCents: user.creditsCents || 0,
+        hasClaimedWelcomeBonus: user.hasClaimedWelcomeBonus || false,
       },
       ...tokens,
     });
@@ -272,6 +276,8 @@ router.get('/me', authenticate, async (req: Request, res: Response) => {
       email: req.user!.email,
       profileImage: req.user!.profileImage,
       bio: req.user!.bio,
+      creditsCents: req.user!.creditsCents || 0,
+      hasClaimedWelcomeBonus: req.user!.hasClaimedWelcomeBonus || false,
     },
   });
 });

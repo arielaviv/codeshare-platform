@@ -9,14 +9,16 @@ const ThemeContext = createContext<ThemeContextType | null>(null);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [dark, setDark] = useState(() => {
-    const stored = localStorage.getItem('theme');
+    // Key intentionally renamed from `theme` so any pre-rebrand dark preference
+    // is invalidated once — Mr8 is a light-by-default brand.
+    const stored = localStorage.getItem('mr8-theme');
     if (stored) return stored === 'dark';
-    return window.matchMedia('(prefers-color-scheme: dark)').matches;
+    return false;
   });
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', dark);
-    localStorage.setItem('theme', dark ? 'dark' : 'light');
+    localStorage.setItem('mr8-theme', dark ? 'dark' : 'light');
   }, [dark]);
 
   const toggle = useCallback(() => setDark((d) => !d), []);

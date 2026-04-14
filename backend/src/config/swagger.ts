@@ -4,9 +4,9 @@ const options: swaggerJsdoc.Options = {
   definition: {
     openapi: '3.0.0',
     info: {
-      title: 'CodeShare API',
+      title: 'Mr8 API',
       version: '1.0.0',
-      description: 'API documentation for CodeShare Platform',
+      description: 'API documentation for Mr8 Platform',
     },
     servers: [
       {

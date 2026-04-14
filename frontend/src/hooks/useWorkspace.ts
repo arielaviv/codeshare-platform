@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 
-const STORAGE_PREFIX = 'codeshare_workspace_';
+const STORAGE_PREFIX = 'mr8_workspace_';
 
 function loadFiles(conversationId: string | null): Map<string, string> {
   if (!conversationId) return new Map();
