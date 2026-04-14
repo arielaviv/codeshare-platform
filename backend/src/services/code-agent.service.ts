@@ -1,88 +1,13 @@
 import Anthropic from '@anthropic-ai/sdk';
-import type { Tool, MessageParam, ContentBlock } from '@anthropic-ai/sdk/resources/messages';
+import type { MessageParam, ContentBlock } from '@anthropic-ai/sdk/resources/messages';
 import mongoose from 'mongoose';
-import { platformToolDefinitions, executePlatformTool, type PlatformToolInput } from './platform-tools';
-import { awardPrize } from './prize.service';
-import { ApiError } from '../middleware/error.middleware';
 import type { ChatMessage } from '../types/chat';
+import type { SSEWriter } from './code-agent.types';
+import { allToolDefinitions, executeTool, type ToolContext } from './tools';
 
-export interface SSEWriter {
-  send(event: string, data: unknown): void;
-  end(): void;
-}
-
-interface FileInput {
-  path: string;
-  content?: string;
-}
-
-type ToolInput = PlatformToolInput | FileInput | Record<string, never>;
+export type { SSEWriter } from './code-agent.types';
 
 const MAX_ITERATIONS = 25;
-
-const workspaceTools: Tool[] = [
-  {
-    name: 'write_file',
-    description: 'Create or overwrite a file in the workspace. Use this to build code files.',
-    input_schema: {
-      type: 'object' as const,
-      properties: {
-        path: { type: 'string', description: 'File path (e.g. index.html, style.css, main.js)' },
-        content: { type: 'string', description: 'Full file content' },
-      },
-      required: ['path', 'content'],
-    },
-  },
-  {
-    name: 'read_file',
-    description: 'Read the content of a file in the workspace.',
-    input_schema: {
-      type: 'object' as const,
-      properties: {
-        path: { type: 'string', description: 'File path to read' },
-      },
-      required: ['path'],
-    },
-  },
-  {
-    name: 'list_files',
-    description: 'List all files currently in the workspace.',
-    input_schema: {
-      type: 'object' as const,
-      properties: {},
-      required: [],
-    },
-  },
-  {
-    name: 'delete_file',
-    description: 'Delete a file from the workspace.',
-    input_schema: {
-      type: 'object' as const,
-      properties: {
-        path: { type: 'string', description: 'File path to delete' },
-      },
-      required: ['path'],
-    },
-  },
-  {
-    name: 'award_prize',
-    description:
-      'Celebrate a meaningful user accomplishment with a small bonus Mr8 credit ($1–$3). Use SPARINGLY — at most once per conversation, AFTER the user has completed something tangible (a working app ready to preview, a finished deck, overcoming a difficult bug). Do NOT use for encouragement mid-task or as a greeting. The user cannot trigger this themselves. Backend rate-limits to 1 prize per 24 hours; you will receive an error if the cooldown is active.',
-    input_schema: {
-      type: 'object' as const,
-      properties: {
-        reason: {
-          type: 'string',
-          description:
-            'Short celebratory message (max 200 chars) describing what the user accomplished — e.g. "finished your first React app" or "shipped a 10-slide pitch deck". Shown to the user on the prize modal.',
-        },
-      },
-      required: ['reason'],
-    },
-  },
-];
-
-const allTools: Tool[] = [...workspaceTools, ...platformToolDefinitions];
 
 function buildSystemPrompt(workspace: Map<string, string>): string {
   const fileList = workspace.size > 0
@@ -230,80 +155,6 @@ Current workspace files:
 ${fileList}`;
 }
 
-function executeWorkspaceTool(
-  name: string,
-  input: ToolInput,
-  workspace: Map<string, string>,
-  writer: SSEWriter,
-): string {
-  const fileInput = input as FileInput;
-
-  switch (name) {
-    case 'write_file': {
-      workspace.set(fileInput.path, fileInput.content || '');
-      writer.send('file_write', { path: fileInput.path, content: fileInput.content });
-      return `Wrote ${fileInput.path} (${(fileInput.content || '').length} chars)`;
-    }
-    case 'read_file': {
-      const content = workspace.get(fileInput.path);
-      if (content === undefined) return `File not found: ${fileInput.path}`;
-      return content;
-    }
-    case 'list_files': {
-      const files = Array.from(workspace.keys());
-      if (files.length === 0) return 'Workspace is empty';
-      return files.join('\n');
-    }
-    case 'delete_file': {
-      if (!workspace.has(fileInput.path)) return `File not found: ${fileInput.path}`;
-      workspace.delete(fileInput.path);
-      writer.send('file_delete', { path: fileInput.path });
-      return `Deleted ${fileInput.path}`;
-    }
-    default:
-      return `Unknown workspace tool: ${name}`;
-  }
-}
-
-const WORKSPACE_TOOL_NAMES = new Set(['write_file', 'read_file', 'list_files', 'delete_file']);
-
-interface PrizeToolInput {
-  reason?: string;
-}
-
-async function executeTool(
-  name: string,
-  input: ToolInput,
-  workspace: Map<string, string>,
-  writer: SSEWriter,
-  userId: mongoose.Types.ObjectId | null,
-): Promise<string> {
-  if (WORKSPACE_TOOL_NAMES.has(name)) {
-    return executeWorkspaceTool(name, input, workspace, writer);
-  }
-  if (name === 'award_prize') {
-    if (!userId) return 'Cannot award prize: user context missing.';
-    const reason = (input as PrizeToolInput).reason || 'Great work!';
-    try {
-      const result = await awardPrize(userId, reason);
-      writer.send('prize_awarded', {
-        amountCents: result.amountCents,
-        newBalanceCents: result.newBalanceCents,
-        reason: result.reason,
-      });
-      const dollars = (result.amountCents / 100).toFixed(2);
-      const balance = (result.newBalanceCents / 100).toFixed(2);
-      return `Awarded user $${dollars}. New balance: $${balance}. The user has been shown a celebratory prize modal — do not mention the award in your next message.`;
-    } catch (err) {
-      if (err instanceof ApiError && err.statusCode === 429) {
-        return 'Prize cooldown active — the user already won a prize in the last 24 hours. Continue helping them without awarding another.';
-      }
-      return `Could not award prize: ${err instanceof Error ? err.message : 'unknown error'}`;
-    }
-  }
-  return executePlatformTool(name, input as PlatformToolInput);
-}
-
 const ALLOWED_MODELS = ['claude-haiku-4-5-20251001', 'claude-sonnet-4-6', 'claude-opus-4-6'];
 
 export async function runCodeAgent(
@@ -324,6 +175,13 @@ export async function runCodeAgent(
   const workspace = new Map<string, string>(Object.entries(initialWorkspace));
   const filesModified: Set<string> = new Set();
 
+  const ctx: ToolContext = {
+    workspace,
+    writer,
+    userId: userId ?? null,
+    filesModified,
+  };
+
   const apiMessages: MessageParam[] = messages.map((m) => ({
     role: m.role,
     content: m.content,
@@ -338,7 +196,7 @@ export async function runCodeAgent(
       model: (model && ALLOWED_MODELS.includes(model)) ? model : 'claude-haiku-4-5-20251001',
       max_tokens: 8192,
       system: buildSystemPrompt(workspace),
-      tools: allTools,
+      tools: allToolDefinitions,
       messages: apiMessages,
     });
 
@@ -370,17 +228,7 @@ export async function runCodeAgent(
         input: toolBlock.input,
       });
 
-      const result = await executeTool(
-        toolBlock.name,
-        toolBlock.input as ToolInput,
-        workspace,
-        writer,
-        userId ?? null,
-      );
-
-      if (toolBlock.name === 'write_file' || toolBlock.name === 'delete_file') {
-        filesModified.add((toolBlock.input as FileInput).path);
-      }
+      const result = await executeTool(toolBlock.name, toolBlock.input, ctx);
 
       const preview = result.length > 200 ? result.slice(0, 200) + '...' : result;
       writer.send('tool_result', { name: toolBlock.name, preview });
