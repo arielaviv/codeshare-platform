@@ -4,17 +4,20 @@ import mongoose from 'mongoose';
 import type { ChatMessage } from '../types/chat';
 import type { SSEWriter } from './code-agent.types';
 import { allToolDefinitions, executeTool, type ToolContext } from './tools';
+import { readProfile, buildSystemPromptSnippet } from './soul.service';
 
 export type { SSEWriter } from './code-agent.types';
 
 const MAX_ITERATIONS = 25;
 
-function buildSystemPrompt(workspace: Map<string, string>): string {
+function buildSystemPrompt(workspace: Map<string, string>, soulSnippet?: string): string {
   const fileList = workspace.size > 0
     ? Array.from(workspace.keys()).join('\n')
     : '(empty)';
 
-  return `You are Mr8, an expert AI assistant and exceptional senior software developer. You generate complete, production-ready web applications that run in a WebContainer browser environment.
+  const soulBlock = soulSnippet ? `\n${soulSnippet}\n` : '';
+
+  return `You are Mr8, an expert AI assistant and exceptional senior software developer. You generate complete, production-ready web applications that run in a WebContainer browser environment.${soulBlock}
 
 You think HOLISTICALLY before creating anything. Consider the full project scope, all files needed, and how components interact before writing code.
 
@@ -204,6 +207,16 @@ export async function runCodeAgent(
     filesModified,
   };
 
+  let soulSnippet: string | undefined;
+  if (userId) {
+    try {
+      const profile = await readProfile(userId);
+      soulSnippet = buildSystemPromptSnippet(profile);
+    } catch {
+      // Profile read is best-effort; agent continues without personalization.
+    }
+  }
+
   const apiMessages: MessageParam[] = messages.map((m) => ({
     role: m.role,
     content: m.content,
@@ -217,7 +230,7 @@ export async function runCodeAgent(
     const response = await client.messages.create({
       model: (model && ALLOWED_MODELS.includes(model)) ? model : 'claude-haiku-4-5-20251001',
       max_tokens: 8192,
-      system: buildSystemPrompt(workspace),
+      system: buildSystemPrompt(workspace, soulSnippet),
       tools: allToolDefinitions,
       messages: apiMessages,
     });
