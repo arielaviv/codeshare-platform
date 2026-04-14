@@ -1,11 +1,15 @@
 import mongoose, { Document, Schema } from 'mongoose';
+import type { BlueprintSpec, DeliveryStatus } from '../types/blueprint';
 
 export type UsageFeature =
   | 'deck-generation'
   | 'code-explanation'
   | 'code-agent'
   | 'code-chat'
-  | 'intent-classify';
+  | 'intent-classify'
+  | 'plan-proposal'
+  | 'feature-upsell'
+  | 'delivery-verify';
 
 export interface IUsageEvent extends Document {
   _id: mongoose.Types.ObjectId;
@@ -15,6 +19,8 @@ export interface IUsageEvent extends Document {
   inputTokens?: number;
   outputTokens?: number;
   costCents?: number;
+  blueprint?: BlueprintSpec;
+  deliveryStatus?: DeliveryStatus;
   createdAt: Date;
 }
 
@@ -34,6 +40,9 @@ const usageEventSchema = new Schema<IUsageEvent>(
         'code-agent',
         'code-chat',
         'intent-classify',
+        'plan-proposal',
+        'feature-upsell',
+        'delivery-verify',
       ],
     },
     modelName: {
@@ -51,6 +60,24 @@ const usageEventSchema = new Schema<IUsageEvent>(
     costCents: {
       type: Number,
       default: 0,
+    },
+    blueprint: {
+      type: Schema.Types.Mixed,
+      required: false,
+    },
+    deliveryStatus: {
+      type: String,
+      enum: [
+        'scoped',
+        'accepted',
+        'building',
+        'verifying',
+        'verified',
+        'delivered',
+        'failed',
+        'cancelled',
+      ],
+      required: false,
     },
   },
   { timestamps: { createdAt: true, updatedAt: false } }
