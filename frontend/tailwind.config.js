@@ -5,6 +5,14 @@ export default {
   theme: {
     extend: {
       colors: {
+        brand: {
+          orange: '#FB7701',
+          'orange-hover': '#E06A00',
+          'orange-soft': '#FFF2E6',
+          green: '#0B8800',
+          'green-hover': '#097500',
+          'green-soft': '#E6F4E2',
+        },
         accent: {
           DEFAULT: '#171717',
           hover: '#333333',
