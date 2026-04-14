@@ -19,9 +19,12 @@ import { classifyIntent } from '../services/intent-classifier.service';
 import { runComputerAgent } from '../services/computer-agent.service';
 import { createComputerSSEWriter } from '../services/computer/sse-writer';
 import { runResearchAgent } from '../services/research/research-agent.service';
-import { generateDeckSchema, classifyIntentSchema } from '../utils/validators';
+import { generateDeckSchema, classifyIntentSchema, acceptDeliverySchema } from '../utils/validators';
 import { ApiError } from '../middleware/error.middleware';
 import type { ChatMessage, AgentRequest } from '../types/chat';
+import { debitForFeature } from '../services/wallet.service';
+import { UsageEvent } from '../models/UsageEvent';
+import mongoose from 'mongoose';
 
 const router = Router();
 
@@ -552,6 +555,79 @@ router.post(
       } else {
         res.end();
       }
+    }
+  }
+);
+
+/**
+ * @swagger
+ * /api/ai/accept-delivery:
+ *   post:
+ *     summary: Accept a delivered build and debit the wallet for the plan price
+ *     tags: [AI]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [planId, priceCents]
+ *             properties:
+ *               planId:
+ *                 type: string
+ *               priceCents:
+ *                 type: integer
+ *     responses:
+ *       200:
+ *         description: Delivery accepted and wallet debited
+ *       400:
+ *         description: Validation error
+ *       402:
+ *         description: Insufficient wallet balance
+ */
+router.post(
+  '/accept-delivery',
+  authenticate,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const validated = acceptDeliverySchema.safeParse(req.body);
+      if (!validated.success) {
+        throw new ApiError(400, validated.error.errors[0]?.message ?? 'Invalid input');
+      }
+      if (!req.user) {
+        throw new ApiError(401, 'Authentication required');
+      }
+
+      const { planId, priceCents } = validated.data;
+      const userId = new mongoose.Types.ObjectId(req.user.id);
+      const debit = await debitForFeature(userId, priceCents, planId);
+
+      if (!debit.ok) {
+        throw new ApiError(402, debit.reason ?? 'Insufficient balance');
+      }
+
+      try {
+        await UsageEvent.create({
+          userId,
+          feature: 'delivery-verify',
+          modelName: 'n/a',
+          costCents: priceCents,
+          deliveryStatus: 'delivered',
+        });
+      } catch {
+        // best-effort usage tracking
+      }
+
+      res.json({
+        ok: true,
+        planId,
+        priceCents,
+        newBalanceCents: debit.newBalanceCents,
+      });
+    } catch (err) {
+      next(err);
     }
   }
 );
