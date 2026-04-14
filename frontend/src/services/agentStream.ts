@@ -93,6 +93,13 @@ export function streamAgent(
               case 'tool_result':
                 handlers.onToolResult(parsed.name, parsed.preview || '');
                 break;
+              case 'prize_awarded':
+                handlers.onPrizeAwarded?.({
+                  amountCents: parsed.amountCents,
+                  newBalanceCents: parsed.newBalanceCents,
+                  reason: parsed.reason || '',
+                });
+                break;
               case 'error':
                 handlers.onError(parsed.message || 'Unknown error');
                 break;

@@ -1,6 +1,9 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { Tool, MessageParam, ContentBlock } from '@anthropic-ai/sdk/resources/messages';
+import mongoose from 'mongoose';
 import { platformToolDefinitions, executePlatformTool, type PlatformToolInput } from './platform-tools';
+import { awardPrize } from './prize.service';
+import { ApiError } from '../middleware/error.middleware';
 import type { ChatMessage } from '../types/chat';
 
 export interface SSEWriter {
@@ -61,6 +64,22 @@ const workspaceTools: Tool[] = [
       required: ['path'],
     },
   },
+  {
+    name: 'award_prize',
+    description:
+      'Celebrate a meaningful user accomplishment with a small bonus Mr8 credit ($1–$3). Use SPARINGLY — at most once per conversation, AFTER the user has completed something tangible (a working app ready to preview, a finished deck, overcoming a difficult bug). Do NOT use for encouragement mid-task or as a greeting. The user cannot trigger this themselves. Backend rate-limits to 1 prize per 24 hours; you will receive an error if the cooldown is active.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        reason: {
+          type: 'string',
+          description:
+            'Short celebratory message (max 200 chars) describing what the user accomplished — e.g. "finished your first React app" or "shipped a 10-slide pitch deck". Shown to the user on the prize modal.',
+        },
+      },
+      required: ['reason'],
+    },
+  },
 ];
 
 const allTools: Tool[] = [...workspaceTools, ...platformToolDefinitions];
@@ -70,7 +89,7 @@ function buildSystemPrompt(workspace: Map<string, string>): string {
     ? Array.from(workspace.keys()).join('\n')
     : '(empty)';
 
-  return `You are CodeShare, an expert AI assistant and exceptional senior software developer. You generate complete, production-ready web applications that run in a WebContainer browser environment.
+  return `You are Mr8, an expert AI assistant and exceptional senior software developer. You generate complete, production-ready web applications that run in a WebContainer browser environment.
 
 You think HOLISTICALLY before creating anything. Consider the full project scope, all files needed, and how components interact before writing code.
 
@@ -200,6 +219,13 @@ COMMUNICATION:
 When using platform tools:
 - Search community posts for reference when relevant.
 
+REWARDING USER PROGRESS (award_prize tool):
+- You have a tool that gives the user a small Mr8 credit bonus ($1–$3). Use it SPARINGLY and only as a CELEBRATION after a meaningful accomplishment.
+- Valid triggers: user just finished a working app ready to preview, user's first completed deck, user recovered from a tricky bug with your help, user hit a major milestone (e.g. 10th project).
+- NEVER use it: as a greeting, mid-build, as encouragement, or before real work is done.
+- Rate-limited to 1 prize per 24 h per user — if the cooldown is active, the tool returns an error and you should just continue normally without mentioning it.
+- After a successful award, the user sees a dedicated prize modal with confetti. DO NOT repeat the award in your text — just continue the conversation naturally ("Nice work! Now let's see your app live…").
+
 Current workspace files:
 ${fileList}`;
 }
@@ -241,14 +267,39 @@ function executeWorkspaceTool(
 
 const WORKSPACE_TOOL_NAMES = new Set(['write_file', 'read_file', 'list_files', 'delete_file']);
 
+interface PrizeToolInput {
+  reason?: string;
+}
+
 async function executeTool(
   name: string,
   input: ToolInput,
   workspace: Map<string, string>,
   writer: SSEWriter,
+  userId: mongoose.Types.ObjectId | null,
 ): Promise<string> {
   if (WORKSPACE_TOOL_NAMES.has(name)) {
     return executeWorkspaceTool(name, input, workspace, writer);
+  }
+  if (name === 'award_prize') {
+    if (!userId) return 'Cannot award prize: user context missing.';
+    const reason = (input as PrizeToolInput).reason || 'Great work!';
+    try {
+      const result = await awardPrize(userId, reason);
+      writer.send('prize_awarded', {
+        amountCents: result.amountCents,
+        newBalanceCents: result.newBalanceCents,
+        reason: result.reason,
+      });
+      const dollars = (result.amountCents / 100).toFixed(2);
+      const balance = (result.newBalanceCents / 100).toFixed(2);
+      return `Awarded user $${dollars}. New balance: $${balance}. The user has been shown a celebratory prize modal — do not mention the award in your next message.`;
+    } catch (err) {
+      if (err instanceof ApiError && err.statusCode === 429) {
+        return 'Prize cooldown active — the user already won a prize in the last 24 hours. Continue helping them without awarding another.';
+      }
+      return `Could not award prize: ${err instanceof Error ? err.message : 'unknown error'}`;
+    }
   }
   return executePlatformTool(name, input as PlatformToolInput);
 }
@@ -260,6 +311,7 @@ export async function runCodeAgent(
   initialWorkspace: Record<string, string>,
   writer: SSEWriter,
   model?: string,
+  userId?: mongoose.Types.ObjectId,
 ): Promise<void> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
@@ -323,6 +375,7 @@ export async function runCodeAgent(
         toolBlock.input as ToolInput,
         workspace,
         writer,
+        userId ?? null,
       );
 
       if (toolBlock.name === 'write_file' || toolBlock.name === 'delete_file') {
