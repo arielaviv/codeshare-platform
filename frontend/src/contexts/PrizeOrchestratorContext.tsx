@@ -74,10 +74,13 @@ export function PrizeOrchestratorProvider({
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const idRef = useRef(0);
 
-  const enqueue = useCallback((item: Omit<QueueItem, 'id'>) => {
+  const nextId = useCallback(() => {
     idRef.current += 1;
-    const queued = { ...item, id: idRef.current } as QueueItem;
-    setQueue((q) => [...q, queued]);
+    return idRef.current;
+  }, []);
+
+  const enqueue = useCallback((item: QueueItem) => {
+    setQueue((q) => [...q, item]);
   }, []);
 
   const advance = useCallback(() => {
@@ -87,12 +90,13 @@ export function PrizeOrchestratorProvider({
   const api = useMemo<PrizeOrchestratorApi>(() => {
     if (value) return value;
     return {
-      triggerSpin: (spin) => enqueue({ kind: 'spin', event: spin }),
-      triggerPrize: (prize) => enqueue({ kind: 'prize', event: prize }),
-      triggerPowerup: (powerup) => enqueue({ kind: 'powerup', event: powerup }),
-      triggerJackpot: () => enqueue({ kind: 'jackpot' }),
+      triggerSpin: (spin) => enqueue({ id: nextId(), kind: 'spin', event: spin }),
+      triggerPrize: (prize) => enqueue({ id: nextId(), kind: 'prize', event: prize }),
+      triggerPowerup: (powerup) =>
+        enqueue({ id: nextId(), kind: 'powerup', event: powerup }),
+      triggerJackpot: () => enqueue({ id: nextId(), kind: 'jackpot' }),
     };
-  }, [enqueue, value]);
+  }, [enqueue, nextId, value]);
 
   const active = queue[0];
 
