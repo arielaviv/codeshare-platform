@@ -5,6 +5,8 @@ import { useTheme } from '../contexts/ThemeContext';
 import { useQueryClient } from '@tanstack/react-query';
 import CreatePostModal from './CreatePostModal';
 import PrizeModal from './PrizeModal';
+import WalletBalanceBadge from './WalletBalanceBadge';
+import TopUpModal from './TopUpModal';
 import confetti from 'canvas-confetti';
 import mr8Logo from '../assets/mr8-logo.png';
 import { formatUsd } from '../utils/formatUsd';
@@ -72,6 +74,7 @@ export default function AppLayout() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [prize, setPrize] = useState<PrizeAward | null>(null);
+  const [showTopUpModal, setShowTopUpModal] = useState(false);
 
   const handlePrizeAwarded = (award: PrizeAward) => {
     const colors = ['#FB7701', '#FFB800', '#FFFFFF', '#FF9A3C', '#0B8800'];
@@ -135,12 +138,15 @@ export default function AppLayout() {
               </div>
               <span className="text-xs text-ink-secondary dark:text-dark-text-secondary truncate">{user.username}</span>
             </div>
-            <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-brand-green-soft dark:bg-brand-green/15 text-brand-green text-[11px] font-semibold">
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
-                <circle cx="12" cy="12" r="10" opacity="0.2" />
-                <path d="M12 7v10M9 10l3-3 3 3M9 14l3 3 3-3" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-              {formatUsd(user.creditsCents)}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-brand-green-soft dark:bg-brand-green/15 text-brand-green text-[11px] font-semibold">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                  <circle cx="12" cy="12" r="10" opacity="0.2" />
+                  <path d="M12 7v10M9 10l3-3 3 3M9 14l3 3 3-3" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                {formatUsd(user.creditsCents)}
+              </div>
+              <WalletBalanceBadge onClick={() => setShowTopUpModal(true)} />
             </div>
           </div>
         )}
@@ -155,6 +161,7 @@ export default function AppLayout() {
             >
               {formatUsd(user.creditsCents)}
             </div>
+            <WalletBalanceBadge collapsed onClick={() => setShowTopUpModal(true)} />
           </div>
         )}
         {!user && !collapsed && (
@@ -253,6 +260,10 @@ export default function AppLayout() {
       </main>
 
       {prize && <PrizeModal prize={prize} onClose={() => setPrize(null)} />}
+
+      {showTopUpModal && (
+        <TopUpModal onClose={() => setShowTopUpModal(false)} />
+      )}
 
       {showCreateModal && (
         <CreatePostModal
