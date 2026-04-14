@@ -594,18 +594,18 @@ router.post(
     try {
       const validated = acceptDeliverySchema.safeParse(req.body);
       if (!validated.success) {
-        throw new ApiError(400, validated.error.errors[0]?.message ?? 'Invalid input');
+        throw new ApiError(validated.error.errors[0]?.message ?? 'Invalid input', 400);
       }
       if (!req.user) {
-        throw new ApiError(401, 'Authentication required');
+        throw new ApiError('Authentication required', 401);
       }
 
       const { planId, priceCents } = validated.data;
-      const userId = new mongoose.Types.ObjectId(req.user.id);
+      const userId = req.user._id;
       const debit = await debitForFeature(userId, priceCents, planId);
 
       if (!debit.ok) {
-        throw new ApiError(402, debit.reason ?? 'Insufficient balance');
+        throw new ApiError(debit.reason ?? 'Insufficient balance', 402);
       }
 
       try {
