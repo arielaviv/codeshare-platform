@@ -8,7 +8,10 @@ import { streamAgent } from '../services/agentStream';
 import { requestResearch } from '../services/researchStream';
 import GenerateDeckModal from '../components/decks/GenerateDeckModal';
 import PrizeModal from '../components/PrizeModal';
+import { PlanApprovalWidget } from '../components/PlanApprovalWidget';
 import type { PrizeAward } from '../types';
+import type { PlanProposedEvent, DeliveryStatusEvent } from '../types/agent-events';
+import type { PermissionMode } from '../types/blueprint';
 import { useAuth } from '../contexts/AuthContext';
 import { useComputer } from '../contexts/ComputerContext';
 import { useComputerStream } from '../hooks/useComputerStream';
@@ -90,6 +93,9 @@ export default function AIChatPage() {
   const [forceMode, setForceMode] = useState<'auto' | 'code' | 'deck' | 'computer'>('auto');
   const [researching, setResearching] = useState<string | null>(null);
   const [prize, setPrize] = useState<PrizeAward | null>(null);
+  const [activePlan, setActivePlan] = useState<PlanProposedEvent | null>(null);
+  const [deliveryStatus, setDeliveryStatus] = useState<DeliveryStatusEvent['status'] | null>(null);
+  const [acceptingDelivery, setAcceptingDelivery] = useState(false);
   const { refreshUser } = useAuth();
   const computerCtx = useComputer();
   const { start: startComputer } = useComputerStream();
@@ -197,6 +203,13 @@ export default function AIChatPage() {
         setPrize(award);
         refreshUser();
       },
+      onPlanProposed(event) {
+        setActivePlan(event);
+        setDeliveryStatus('scoped');
+      },
+      onDeliveryStatus(event) {
+        setDeliveryStatus(event.status);
+      },
       onError(message) {
         if (!textContent) {
           textContent = message;
@@ -223,6 +236,49 @@ export default function AIChatPage() {
       },
     }, selectedModel);
   }, [loading, messages, workspace, projectName, selectedModel]);
+
+  const acceptPlanAndBuild = useCallback(
+    (mode: PermissionMode, clearContext: boolean) => {
+      if (!activePlan) return;
+      const { planId, pricing } = activePlan;
+      const acceptanceText = `Accept the plan. id=${planId} dealerCents=${pricing.dealerCents} mode=${mode} clearContext=${clearContext}`;
+      setActivePlan(null);
+      setDeliveryStatus(null);
+      runCodeFlow(acceptanceText);
+    },
+    [activePlan, runCodeFlow],
+  );
+
+  const acceptDelivery = useCallback(async () => {
+    if (!activePlan || acceptingDelivery) return;
+    setAcceptingDelivery(true);
+    try {
+      const { data } = await api.post<{ ok: boolean; newBalanceCents: number; priceCents: number }>(
+        '/ai/accept-delivery',
+        { planId: activePlan.planId, priceCents: activePlan.pricing.dealerCents },
+      );
+      if (data.ok) {
+        setDeliveryStatus('delivered');
+        setActivePlan(null);
+        refreshUser();
+      }
+    } catch (err) {
+      console.error('accept-delivery failed', err);
+    } finally {
+      setAcceptingDelivery(false);
+    }
+  }, [activePlan, acceptingDelivery, refreshUser]);
+
+  const onSpinForDiscount = useCallback(() => {
+    // W3 prize orchestrator will handle this. For now, just log.
+    console.info('[plan-spine] spin-for-discount requested — awaiting W3 orchestrator');
+  }, []);
+
+  const onTellMr8 = useCallback(() => {
+    setActivePlan(null);
+    setDeliveryStatus(null);
+    textareaRef.current?.focus();
+  }, []);
 
   const runComputerFlow = useCallback((trimmed: string) => {
     const userMsg: DisplayMessage = { id: `user-${Date.now()}`, role: 'user', content: trimmed };
@@ -544,6 +600,39 @@ export default function AIChatPage() {
               </div>
             )}
           </div>
+
+          {activePlan && deliveryStatus === 'scoped' && (
+            <div className="px-4 pb-2 flex-shrink-0">
+              <PlanApprovalWidget
+                plan={activePlan.plan}
+                pricing={activePlan.pricing}
+                onAcceptBuild={acceptPlanAndBuild}
+                onSpinForDiscount={onSpinForDiscount}
+                onTellMr8={onTellMr8}
+              />
+            </div>
+          )}
+
+          {deliveryStatus === 'verified' && activePlan && (
+            <div className="px-4 pb-2 flex-shrink-0">
+              <div className="flex items-center justify-between rounded-md border border-emerald-700/40 bg-emerald-950/40 px-3 py-2 text-[11px]">
+                <div className="text-emerald-200">
+                  Build verified. Accept & Merge to finalize —{' '}
+                  <span className="font-semibold">
+                    ${(activePlan.pricing.dealerCents / 100).toFixed(2)}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={acceptDelivery}
+                  disabled={acceptingDelivery}
+                  className="rounded bg-emerald-500 px-3 py-1 font-semibold text-emerald-950 hover:bg-emerald-400 disabled:bg-emerald-800 disabled:text-emerald-400"
+                >
+                  {acceptingDelivery ? 'Debiting…' : 'Accept & Merge'}
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="p-4 flex-shrink-0 space-y-2.5">
             <div className="bg-[#1A1A1A] border border-[#333] rounded-xl overflow-hidden">
