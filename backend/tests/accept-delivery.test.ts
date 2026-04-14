@@ -1,11 +1,14 @@
 import request from 'supertest';
+import mongoose from 'mongoose';
 import { app } from '../src/server';
 import { createTestUser, getAuthHeader } from './setup';
 import { UsageEvent } from '../src/models/UsageEvent';
+import { topUp } from '../src/services/wallet.service';
 
 describe('POST /api/ai/accept-delivery', () => {
   it('accepts a valid plan debit and returns ok:true + balance', async () => {
-    const { accessToken } = await createTestUser();
+    const { user, accessToken } = await createTestUser();
+    await topUp(new mongoose.Types.ObjectId(user.id), 1000);
 
     const res = await request(app)
       .post('/api/ai/accept-delivery')
@@ -16,11 +19,12 @@ describe('POST /api/ai/accept-delivery', () => {
     expect(res.body.ok).toBe(true);
     expect(res.body.planId).toBe('abc123');
     expect(res.body.priceCents).toBe(249);
-    expect(typeof res.body.newBalanceCents).toBe('number');
+    expect(res.body.newBalanceCents).toBe(751);
   });
 
   it('writes a UsageEvent with deliveryStatus delivered', async () => {
     const { user, accessToken } = await createTestUser();
+    await topUp(new mongoose.Types.ObjectId(user.id), 500);
 
     await request(app)
       .post('/api/ai/accept-delivery')
@@ -31,6 +35,17 @@ describe('POST /api/ai/accept-delivery', () => {
     expect(events.length).toBeGreaterThanOrEqual(1);
     expect(events[0].deliveryStatus).toBe('delivered');
     expect(events[0].costCents).toBe(99);
+  });
+
+  it('rejects the debit with 402 when wallet balance is insufficient', async () => {
+    const { accessToken } = await createTestUser();
+
+    const res = await request(app)
+      .post('/api/ai/accept-delivery')
+      .set(getAuthHeader(accessToken))
+      .send({ planId: 'broke', priceCents: 249 });
+
+    expect(res.status).toBe(402);
   });
 
   it('rejects an unauthenticated request with 401', async () => {
