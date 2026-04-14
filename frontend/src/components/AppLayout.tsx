@@ -4,6 +4,11 @@ import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { useQueryClient } from '@tanstack/react-query';
 import CreatePostModal from './CreatePostModal';
+import PrizeModal from './PrizeModal';
+import confetti from 'canvas-confetti';
+import mr8Logo from '../assets/mr8-logo.png';
+import { formatUsd } from '../utils/formatUsd';
+import type { PrizeAward } from '../types';
 
 interface LayoutContext {
   openCreateModal: () => void;
@@ -29,7 +34,7 @@ function NavItem({ to, label, icon, collapsed }: {
         collapsed ? 'justify-center' : ''
       } ${
         active
-          ? 'text-accent dark:text-white font-medium'
+          ? 'text-brand-orange font-semibold'
           : 'text-ink-secondary dark:text-dark-text-secondary hover:text-ink dark:hover:text-dark-text'
       }`}
     >
@@ -61,11 +66,23 @@ function NavButton({ label, icon, onClick, collapsed }: {
 }
 
 export default function AppLayout() {
-  const { user, logout } = useAuth();
+  const { user, logout, refreshUser } = useAuth();
   const { dark, toggle: toggleTheme } = useTheme();
   const queryClient = useQueryClient();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [prize, setPrize] = useState<PrizeAward | null>(null);
+
+  const handlePrizeAwarded = (award: PrizeAward) => {
+    const colors = ['#FB7701', '#FFB800', '#FFFFFF', '#FF9A3C', '#0B8800'];
+    confetti({ particleCount: 200, spread: 110, startVelocity: 55, origin: { y: 0.55 }, colors, scalar: 1.2 });
+    setTimeout(() => {
+      confetti({ particleCount: 80, angle: 60, spread: 70, origin: { x: 0.1, y: 0.6 }, colors });
+      confetti({ particleCount: 80, angle: 120, spread: 70, origin: { x: 0.9, y: 0.6 }, colors });
+    }, 200);
+    setPrize(award);
+    refreshUser();
+  };
   const location = useLocation();
   const isChat = location.pathname === '/chat';
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('sidebar-collapsed') === 'true');
@@ -93,11 +110,7 @@ export default function AppLayout() {
       <div className={`p-3 border-b border-edge dark:border-dark-border ${collapsed ? 'flex flex-col items-center gap-2' : ''}`}>
         <div className={`flex items-center ${collapsed ? 'justify-center' : 'justify-between'} mb-2`}>
           <Link to="/" className="flex items-center gap-2">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-ink dark:text-dark-text flex-shrink-0">
-              <polyline points="16 18 22 12 16 6" />
-              <polyline points="8 6 2 12 8 18" />
-            </svg>
-            {!collapsed && <span className="font-semibold text-sm text-ink dark:text-dark-text">CodeShare</span>}
+            <img src={mr8Logo} alt="Mr8" width={24} height={24} className="flex-shrink-0 rounded-md" />
           </Link>
           {!collapsed && (
             <button onClick={toggleCollapse} className="p-1 text-ink-tertiary hover:text-ink dark:text-dark-text-tertiary dark:hover:text-dark-text transition-colors">
@@ -115,16 +128,33 @@ export default function AppLayout() {
           </button>
         )}
         {!collapsed && user && (
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded-full bg-surface-tertiary dark:bg-dark-surface text-ink-secondary dark:text-dark-text-secondary text-[10px] font-medium flex items-center justify-center flex-shrink-0">
-              {user.username[0].toUpperCase()}
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2">
+              <div className="w-6 h-6 rounded-full bg-surface-tertiary dark:bg-dark-surface text-ink-secondary dark:text-dark-text-secondary text-[10px] font-medium flex items-center justify-center flex-shrink-0">
+                {user.username[0].toUpperCase()}
+              </div>
+              <span className="text-xs text-ink-secondary dark:text-dark-text-secondary truncate">{user.username}</span>
             </div>
-            <span className="text-xs text-ink-secondary dark:text-dark-text-secondary truncate">{user.username}</span>
+            <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-brand-green-soft dark:bg-brand-green/15 text-brand-green text-[11px] font-semibold">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                <circle cx="12" cy="12" r="10" opacity="0.2" />
+                <path d="M12 7v10M9 10l3-3 3 3M9 14l3 3 3-3" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              {formatUsd(user.creditsCents)}
+            </div>
           </div>
         )}
         {collapsed && user && (
-          <div className="w-6 h-6 rounded-full bg-surface-tertiary dark:bg-dark-surface text-ink-secondary dark:text-dark-text-secondary text-[10px] font-medium flex items-center justify-center">
-            {user.username[0].toUpperCase()}
+          <div className="flex flex-col items-center gap-1.5">
+            <div className="w-6 h-6 rounded-full bg-surface-tertiary dark:bg-dark-surface text-ink-secondary dark:text-dark-text-secondary text-[10px] font-medium flex items-center justify-center">
+              {user.username[0].toUpperCase()}
+            </div>
+            <div
+              className="text-[9px] font-semibold text-brand-green"
+              title={`${formatUsd(user.creditsCents)} credit`}
+            >
+              {formatUsd(user.creditsCents)}
+            </div>
           </div>
         )}
         {!user && !collapsed && (
@@ -140,6 +170,11 @@ export default function AppLayout() {
         <NavItem to="/chat" label="AI Chat" collapsed={collapsed}
           icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>}
         />
+        {user && (
+          <NavItem to="/decks" label="AI Decks" collapsed={collapsed}
+            icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="4" width="18" height="14" rx="2" /><line x1="3" y1="10" x2="21" y2="10" /><line x1="9" y1="18" x2="9" y2="10" /></svg>}
+          />
+        )}
         {user && (
           <>
             {!collapsed && <div className="section-label mt-3">Content</div>}
@@ -200,10 +235,7 @@ export default function AppLayout() {
           </svg>
         </button>
         <Link to="/" className="flex items-center gap-1.5 ml-2">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-ink dark:text-dark-text">
-            <polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" />
-          </svg>
-          <span className="font-semibold text-sm dark:text-dark-text">CodeShare</span>
+          <img src={mr8Logo} alt="Mr8" width={22} height={22} className="rounded-md" />
         </Link>
       </div>
 
@@ -220,6 +252,8 @@ export default function AppLayout() {
         <Outlet context={{ openCreateModal } satisfies LayoutContext} />
       </main>
 
+      {prize && <PrizeModal prize={prize} onClose={() => setPrize(null)} />}
+
       {showCreateModal && (
         <CreatePostModal
           onClose={() => setShowCreateModal(false)}
@@ -227,6 +261,7 @@ export default function AppLayout() {
             setShowCreateModal(false);
             queryClient.invalidateQueries({ queryKey: ['posts'] });
           }}
+          onPrizeAwarded={handlePrizeAwarded}
         />
       )}
     </div>
