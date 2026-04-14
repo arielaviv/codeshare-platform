@@ -14,6 +14,9 @@ import postRoutes from './routes/post.routes';
 import commentRoutes from './routes/comment.routes';
 import likeRoutes from './routes/like.routes';
 import aiRoutes from './routes/ai.routes';
+import deckRoutes from './routes/deck.routes';
+import welcomeSpinRoutes from './routes/welcomeSpin.routes';
+import anonBuildRoutes from './routes/anonBuild.routes';
 
 dotenv.config({ path: path.join(__dirname, '../.env') });
 
@@ -54,6 +57,9 @@ app.use('/api/posts', postRoutes);
 app.use('/api', commentRoutes);
 app.use('/api', likeRoutes);
 app.use('/api/ai', aiRoutes);
+app.use('/api/ai', anonBuildRoutes);
+app.use('/api/decks', deckRoutes);
+app.use('/api/welcome-spin', welcomeSpinRoutes);
 
 // Error handling middleware
 app.use(errorHandler);
