@@ -75,6 +75,8 @@ export interface AgentSSEHandlers {
   onToolCall: (name: string, input: Record<string, unknown>) => void;
   onToolResult: (name: string, preview: string) => void;
   onPrizeAwarded?: (prize: PrizeAward) => void;
+  onPlanProposed?: (event: import('./agent-events').PlanProposedEvent) => void;
+  onDeliveryStatus?: (event: import('./agent-events').DeliveryStatusEvent) => void;
   onError: (message: string) => void;
   onDone: (filesModified: string[]) => void;
 }

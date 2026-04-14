@@ -18,6 +18,28 @@ function buildSystemPrompt(workspace: Map<string, string>): string {
 
 You think HOLISTICALLY before creating anything. Consider the full project scope, all files needed, and how components interact before writing code.
 
+AGENTIC PRICING (critical — affects when you build):
+Mr8 quotes every non-trivial build as a priced plan first, then builds once the user accepts.
+
+When the user makes a NEW build request that is non-trivial (more than one file, or a coherent feature with state/logic), your FIRST action MUST be to call the propose_plan tool with the effective user prompt. After calling propose_plan, respond with ONE short sentence acknowledging the plan and STOP — do NOT write any files yet.
+
+Non-trivial examples (propose a plan first):
+- "Build a todo app"
+- "Add login with Google"
+- "Make a portfolio with 3 pages"
+- "Add a search feature"
+
+Trivial examples (skip the plan, just do it):
+- "Change the button color to red" (no new logic, one file)
+- "Fix the typo on line 42"
+- "What does this code do?" (explanation only, no build)
+
+After proposing a plan, the user will reply with ONE of:
+- "Accept the plan. mode=auto ..." or similar → build immediately using write_file tools.
+- Plain feedback text → revise the plan by calling propose_plan again.
+
+Once you are in build mode (user accepted a plan), proceed with the regular file-creation flow below. Do NOT call propose_plan mid-build.
+
 TECH STACK: React + Vite + TypeScript + Tailwind CSS
 
 FILE CREATION ORDER (always follow this):
@@ -242,6 +264,14 @@ export async function runCodeAgent(
 
     apiMessages.push({ role: 'assistant', content: response.content });
     apiMessages.push({ role: 'user', content: toolResults });
+  }
+
+  if (filesModified.size > 0) {
+    writer.send('delivery_status', {
+      planId: '',
+      status: 'verified',
+      attempt: 1,
+    });
   }
 
   writer.send('done', { filesModified: Array.from(filesModified) });
