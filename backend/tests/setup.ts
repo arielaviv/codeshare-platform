@@ -12,6 +12,48 @@ jest.mock('@anthropic-ai/sdk', () => ({
   })),
 }));
 
+// E2B SDKs ship as pure ESM which Jest's CJS loader cannot parse. Stub them.
+jest.mock('@e2b/code-interpreter', () => ({
+  __esModule: true,
+  Sandbox: {
+    create: jest.fn(() =>
+      Promise.resolve({
+        sandboxId: 'mock-compute',
+        files: {
+          write: jest.fn(() => Promise.resolve()),
+          read: jest.fn(() => Promise.resolve('')),
+          list: jest.fn(() => Promise.resolve([])),
+        },
+        commands: { run: jest.fn(() => Promise.resolve({ stdout: '', stderr: '' })) },
+        runCode: jest.fn(() =>
+          Promise.resolve({ logs: { stdout: [], stderr: [] }, results: [] })
+        ),
+        pause: jest.fn(() => Promise.resolve()),
+      })
+    ),
+    connect: jest.fn(() => Promise.reject(new Error('mock-no-connect'))),
+  },
+}));
+
+jest.mock('@e2b/desktop', () => ({
+  __esModule: true,
+  Sandbox: {
+    create: jest.fn(() =>
+      Promise.resolve({
+        sandboxId: 'mock-desktop',
+        files: { write: jest.fn(() => Promise.resolve()) },
+        commands: { run: jest.fn(() => Promise.resolve({ stdout: '{}', stderr: '' })) },
+        stream: {
+          start: jest.fn(() => Promise.resolve()),
+          getUrl: () => 'https://mock.e2b/stream?viewOnly=true',
+        },
+        kill: jest.fn(() => Promise.resolve()),
+      })
+    ),
+    connect: jest.fn(() => Promise.reject(new Error('mock-no-connect'))),
+  },
+}));
+
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import mongoose from 'mongoose';
 import request from 'supertest';

@@ -27,6 +27,8 @@ module.exports = {
   },
   setupFiles: ['<rootDir>/tests/env.ts'],
   setupFilesAfterEnv: ['<rootDir>/tests/setup.ts'],
+  maxWorkers: 1,
+  testTimeout: 30000,
   moduleFileExtensions: ['ts', 'js', 'json'],
   verbose: true,
   transform: {
