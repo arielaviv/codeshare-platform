@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import api from '../services/api';
 import { Post } from '../types';
 import CodeEditor from './CodeEditor';
+import { getStaticBase } from '../lib/apiBase';
 
 interface Props {
   post: Post;
@@ -32,7 +33,7 @@ export default function PostCard({ post }: Props) {
         <Link to={`/profile/${post.userId.id || (post.userId as unknown as string)}`}>
           {post.userId.profileImage ? (
             <img
-              src={`http://localhost:5000${post.userId.profileImage}`}
+              src={`${getStaticBase()}${post.userId.profileImage}`}
               alt={post.userId.username}
               className="w-8 h-8 rounded-full object-cover"
             />
@@ -78,7 +79,7 @@ export default function PostCard({ post }: Props) {
 
       {post.image && (
         <img
-          src={`http://localhost:5000${post.image}`}
+          src={`${getStaticBase()}${post.image}`}
           alt="Post"
           className="rounded mb-3 max-h-96 object-cover w-full"
         />

@@ -24,7 +24,7 @@ const ITEMS: TrustItem[] = [
     ),
   },
   {
-    label: '100% Private.',
+    label: 'Secured',
     icon: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M12 2l8 4v6c0 5-3.5 9.5-8 10-4.5-.5-8-5-8-10V6l8-4z" />
@@ -122,7 +122,7 @@ export default function TycoonTrustBar() {
           <path d="M13.73 21a2 2 0 0 1-3.46 0" />
         </svg>
         <p className="text-[11px] sm:text-xs text-ink dark:text-[#E8E8E8] leading-snug flex-1 min-w-0">
-          <span className="font-bold text-brand-green">Mr8:</span>{' '}
+          <span className="font-bold text-brand-green">Mr8 - your general AI agent:</span>{' '}
           <span className="text-ink-secondary dark:text-[#A0A0A0]">
             Use daily or invite friends to get free rewards.
           </span>

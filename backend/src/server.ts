@@ -24,13 +24,25 @@ const app: Application = express();
 const PORT = process.env.PORT || 5000;
 
 // Middleware
+const corsAllowlist = (process.env.FRONTEND_URLS ?? process.env.FRONTEND_URL ?? 'http://localhost:5173')
+  .split(',')
+  .map((s) => s.trim().replace(/\/+$/, ''))
+  .filter(Boolean);
+
 app.use(cors({
-  origin: [
-    process.env.FRONTEND_URL || 'http://localhost:5173',
-    'http://localhost:5173',
-    'http://localhost:5174',
-  ],
-  credentials: true
+  origin(origin, callback) {
+    // Allow same-origin / curl / server-to-server (no Origin header).
+    if (!origin) return callback(null, true);
+    const normalized = origin.replace(/\/+$/, '');
+    if (corsAllowlist.includes(normalized)) return callback(null, true);
+    // Permissive for any localhost / 127.0.0.1 port in dev so the Vite
+    // auto-port-bump (5173 → 5174 → …) doesn't get blocked.
+    if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(normalized)) {
+      return callback(null, true);
+    }
+    return callback(new Error(`CORS: origin ${origin} not allowed`));
+  },
+  credentials: true,
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));

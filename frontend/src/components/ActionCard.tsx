@@ -65,6 +65,11 @@ export type { ActionStep };
 
 export default function ActionCard({ title, steps, expanded, onToggle }: ActionCardProps) {
   const [hoveredStep, setHoveredStep] = useState<string | null>(null);
+
+  // Until real `plan_proposed` events from the agent populate steps (Phase 3),
+  // render nothing — the prior fabricated checklist was misleading.
+  if (steps.length === 0) return null;
+
   const overallStatus = steps.every((s) => s.status === 'done') ? 'done' : steps.some((s) => s.status === 'active') ? 'active' : 'pending';
 
   return (

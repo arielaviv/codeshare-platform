@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import Editor from '@monaco-editor/react';
+import { useTheme } from '../contexts/ThemeContext';
 
 interface CodeEditorProps {
   value: string;
@@ -19,6 +20,7 @@ export default function CodeEditor({
   showMinimap = false,
 }: CodeEditorProps) {
   const [copied, setCopied] = useState(false);
+  const { dark } = useTheme();
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(value);
@@ -32,11 +34,14 @@ export default function CodeEditor({
         height={height}
         language={language}
         value={value}
-        theme="vs-dark"
+        theme={dark ? 'vs-dark' : 'vs'}
         onChange={(val) => onChange?.(val ?? '')}
         loading={
-          <div className="bg-[#1E1E1E] flex items-center justify-center" style={{ height }}>
-            <span className="text-[#666] text-sm">Loading editor...</span>
+          <div
+            className="flex items-center justify-center bg-white dark:bg-[#1E1E1E]"
+            style={{ height }}
+          >
+            <span className="text-sm text-ink-tertiary dark:text-[#666]">Loading editor...</span>
           </div>
         }
         options={{
@@ -65,7 +70,7 @@ export default function CodeEditor({
       {readOnly && (
         <button
           onClick={handleCopy}
-          className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-[#333] hover:bg-[#444] text-[#ccc] text-xs px-2 py-1 rounded"
+          className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-surface-secondary dark:bg-[#333] hover:bg-surface-tertiary dark:hover:bg-[#444] text-ink dark:text-[#ccc] border border-edge dark:border-transparent text-xs px-2 py-1 rounded"
         >
           {copied ? 'Copied!' : 'Copy'}
         </button>

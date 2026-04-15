@@ -10,15 +10,20 @@ interface Props {
   onPrizeAwarded?: (prize: PrizeAward) => void;
   initialTopic?: string;
   researchBrief?: ResearchBrief;
+  /** When true, auto-submit on mount with the current defaults instead of
+   *  showing the wizard. Used by the new "Slide deck" mode flow that already
+   *  did its own research and just wants Mr8 to ship the slides. */
+  autoStart?: boolean;
 }
 
 type Style = 'professional' | 'casual' | 'academic';
 
-export default function GenerateDeckModal({ onClose, onComplete, onPrizeAwarded, initialTopic = '', researchBrief }: Props) {
+export default function GenerateDeckModal({ onClose, onComplete, onPrizeAwarded, initialTopic = '', researchBrief, autoStart = false }: Props) {
   const [topic, setTopic] = useState(initialTopic);
   const [slideCount, setSlideCount] = useState(8);
   const [style, setStyle] = useState<Style>('professional');
   const [templateId, setTemplateId] = useState<string | null>(null);
+  const autoStartFiredRef = useRef(false);
 
   const applyTemplate = (id: string) => {
     const tpl = DECK_TEMPLATES.find((t) => t.id === id);
@@ -38,6 +43,16 @@ export default function GenerateDeckModal({ onClose, onComplete, onPrizeAwarded,
       abortRef.current?.abort();
     };
   }, []);
+
+  // Auto-start when the caller already gathered everything (Slide-deck mode flow).
+  useEffect(() => {
+    if (!autoStart) return;
+    if (autoStartFiredRef.current) return;
+    if (!initialTopic || initialTopic.trim().length < 3) return;
+    autoStartFiredRef.current = true;
+    submit();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoStart, initialTopic]);
 
   const submit = () => {
     if (!topic.trim() || topic.trim().length < 3) {

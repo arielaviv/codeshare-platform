@@ -2,7 +2,8 @@ import { useCallback, useRef } from 'react';
 import { useComputer } from '../contexts/ComputerContext';
 import type { ChatMessage } from '../types';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+import { getApiBase } from '../lib/apiBase';
+const API_URL = getApiBase();
 
 export interface ComputerStreamOptions {
   messages: ChatMessage[];
@@ -108,7 +109,7 @@ export function useComputerStream(): {
           });
         } catch (err) {
           if ((err as Error).name === 'AbortError') return;
-          options.onError?.('Failed to connect to Mr8 Computer.');
+          options.onError?.("Failed to connect to Mr8's Computer.");
           options.onDone?.();
           return;
         }
@@ -120,12 +121,12 @@ export function useComputerStream(): {
           return;
         }
         if (response.status === 429) {
-          options.onError?.('Mr8 Computer rate limit reached. Try again later.');
+          options.onError?.("Mr8's Computer rate limit reached. Try again later.");
           options.onDone?.();
           return;
         }
         if (!response.ok || !response.body) {
-          options.onError?.('Mr8 Computer request failed.');
+          options.onError?.("Mr8's Computer request failed.");
           options.onDone?.();
           return;
         }

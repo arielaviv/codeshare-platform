@@ -6,58 +6,126 @@ import confetti from 'canvas-confetti';
 import api, { intentAPI } from '../services/api';
 import { streamAgent } from '../services/agentStream';
 import { requestResearch } from '../services/researchStream';
-import GenerateDeckModal from '../components/decks/GenerateDeckModal';
+import { streamDeckGeneration } from '../services/deckStream';
 import PrizeModal from '../components/PrizeModal';
 import type { PrizeAward } from '../types';
 import { useAuth } from '../contexts/AuthContext';
 import { useComputer } from '../contexts/ComputerContext';
 import { useComputerStream } from '../hooks/useComputerStream';
 import { ComputerPanel } from '../components/computer';
-import type { ResearchBrief } from '../types/deck';
 import WorkspacePanel from '../components/WorkspacePanel';
 import PreviewPanel from '../components/PreviewPanel';
-import ActionCard from '../components/ActionCard';
-import type { ActionStep } from '../components/ActionCard';
+import ToolCallCard from '../components/chat/ToolCallCard';
+import TaskListCard from '../components/chat/TaskListCard';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { wcManager } from '../lib/webcontainer-manager';
 import SettingsModal from '../components/SettingsModal';
-import type { ChatMessage, ToolUsed } from '../types';
+import type { ChatMessage } from '../types';
 import type { Components } from 'react-markdown';
 
-interface DisplayMessage {
+/**
+ * Unified chat transcript item. Position in the array is the render order —
+ * never reposition or wrap an existing item; only append new ones. This keeps
+ * the rule from the plan (`magical-questing-yeti.md`): tool calls and plan
+ * widgets must appear *between* text segments in stream order, never
+ * teleported above later text.
+ *
+ * Phase 3 will extend the union with: 'plan', 'plan-approval', 'delivery-ready'.
+ */
+interface TaskListTask {
   id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  toolsUsed?: ToolUsed[];
+  label: string;
+  status: 'pending' | 'running' | 'done' | 'error';
 }
+
+type ChatItem =
+  | { id: string; kind: 'user'; content: string }
+  | { id: string; kind: 'assistant-text'; content: string }
+  | {
+      id: string;
+      kind: 'tool-call';
+      tool: string;
+      input: unknown;
+      result?: unknown;
+      status: 'running' | 'done' | 'error';
+    }
+  | {
+      id: string;
+      kind: 'task-list';
+      title: string;
+      tasks: TaskListTask[];
+      status: 'running' | 'done' | 'error';
+    };
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
+/** Build the wire-format history the agent endpoint expects. Tool-call items
+ *  don't belong in the conversation history — only user/assistant text. */
+function toApiHistory(items: ChatItem[]): ChatMessage[] {
+  return items
+    .filter((m): m is Extract<ChatItem, { kind: 'user' | 'assistant-text' }> =>
+      m.kind === 'user' || m.kind === 'assistant-text'
+    )
+    .map((m) => ({
+      role: m.kind === 'user' ? 'user' : 'assistant',
+      content: m.content,
+    }));
+}
+
 function buildMarkdownComponents(): Components {
   return {
-    h1: ({ children }) => <h1 className="text-lg font-bold mb-2 mt-3 text-[#E8E8E8]">{children}</h1>,
-    h2: ({ children }) => <h2 className="text-base font-bold mb-2 mt-3 text-[#E8E8E8]">{children}</h2>,
-    h3: ({ children }) => <h3 className="text-sm font-bold mb-1 mt-2 text-[#E8E8E8]">{children}</h3>,
-    p: ({ children }) => <p className="mb-2 leading-relaxed text-[#D4D4D4]">{children}</p>,
-    ul: ({ children }) => <ul className="ml-5 mb-2 list-disc space-y-1 text-[#D4D4D4]">{children}</ul>,
-    ol: ({ children }) => <ol className="ml-5 mb-2 list-decimal space-y-1 text-[#D4D4D4]">{children}</ol>,
-    li: ({ children }) => <li className="leading-relaxed text-[#D4D4D4]">{children}</li>,
-    strong: ({ children }) => <strong className="font-semibold text-[#E8E8E8]">{children}</strong>,
+    h1: ({ children }) => (
+      <h1 className="text-lg font-bold mb-2 mt-3 text-ink dark:text-[#E8E8E8]">{children}</h1>
+    ),
+    h2: ({ children }) => (
+      <h2 className="text-base font-bold mb-2 mt-3 text-ink dark:text-[#E8E8E8]">{children}</h2>
+    ),
+    h3: ({ children }) => (
+      <h3 className="text-sm font-bold mb-1 mt-2 text-ink dark:text-[#E8E8E8]">{children}</h3>
+    ),
+    p: ({ children }) => (
+      <p className="mb-2 leading-relaxed text-ink-secondary dark:text-[#D4D4D4]">{children}</p>
+    ),
+    ul: ({ children }) => (
+      <ul className="ml-5 mb-2 list-disc space-y-1 text-ink-secondary dark:text-[#D4D4D4]">{children}</ul>
+    ),
+    ol: ({ children }) => (
+      <ol className="ml-5 mb-2 list-decimal space-y-1 text-ink-secondary dark:text-[#D4D4D4]">{children}</ol>
+    ),
+    li: ({ children }) => (
+      <li className="leading-relaxed text-ink-secondary dark:text-[#D4D4D4]">{children}</li>
+    ),
+    strong: ({ children }) => (
+      <strong className="font-semibold text-ink dark:text-[#E8E8E8]">{children}</strong>
+    ),
     a: ({ href, children }) => (
-      <a href={href} target="_blank" rel="noreferrer" className="text-[#60A5FA] hover:underline">{children}</a>
+      <a
+        href={href}
+        target="_blank"
+        rel="noreferrer"
+        className="text-brand-orange hover:underline dark:text-[#60A5FA]"
+      >
+        {children}
+      </a>
     ),
     code: ({ className, children }) => {
       const match = /language-(\w+)/.exec(className || '');
       if (match) {
         return (
-          <div className="my-2 rounded bg-[#141414] border border-[#2A2A2A] overflow-x-auto">
-            <pre className="p-3 text-[13px] font-mono text-[#D4D4D4]"><code>{children}</code></pre>
+          <div className="my-2 rounded bg-surface-secondary dark:bg-[#141414] border border-edge dark:border-[#2A2A2A] overflow-x-auto">
+            <pre className="p-3 text-[13px] font-mono text-ink-secondary dark:text-[#D4D4D4]">
+              <code>{children}</code>
+            </pre>
           </div>
         );
       }
-      return <code className="bg-[#2A2A2A] text-[#E8E8E8] px-1.5 py-0.5 rounded text-[13px] font-mono">{children}</code>;
+      return (
+        <code className="bg-surface-tertiary dark:bg-[#2A2A2A] text-ink dark:text-[#E8E8E8] px-1.5 py-0.5 rounded text-[13px] font-mono">
+          {children}
+        </code>
+      );
     },
     pre: ({ children }) => <>{children}</>,
   };
@@ -72,23 +140,21 @@ const SUGGESTION_CHIPS = [
 
 export default function AIChatPage() {
   const [sessionId] = useState(generateId);
-  const [messages, setMessages] = useState<DisplayMessage[]>([]);
+  const [messages, setMessages] = useState<ChatItem[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [projectName, setProjectName] = useState('');
   const [selectedModel, setSelectedModel] = useState('claude-haiku-4-5-20251001');
   const [editingName, setEditingName] = useState(false);
-  const [rightTab, setRightTab] = useState<'code' | 'preview'>('code');
-  const [actionSteps, setActionSteps] = useState<ActionStep[]>([]);
-  const [actionTitle, setActionTitle] = useState('');
-  const [actionExpanded, setActionExpanded] = useState(true);
+  const [rightTab, setRightTab] = useState<'code' | 'preview' | 'computer'>('preview');
+  // The artifact panel (right side) is auto-revealed on first artifact event
+  // (file_write or browser/python tool_call). The user can dismiss it with the
+  // X button; dismissal is reset on the next user message so a new turn can
+  // surface its own artifact.
+  const [panelDismissed, setPanelDismissed] = useState(false);
   const [terminalLogs, setTerminalLogs] = useState('');
   const [showSettings, setShowSettings] = useState(false);
-  const [deckConfirm, setDeckConfirm] = useState<{ prompt: string; confidence: number } | null>(null);
-  const [deckModalPrompt, setDeckModalPrompt] = useState<string | null>(null);
-  const [deckModalBrief, setDeckModalBrief] = useState<ResearchBrief | undefined>(undefined);
-  const [forceMode, setForceMode] = useState<'auto' | 'code' | 'deck' | 'computer'>('auto');
-  const [researching, setResearching] = useState<string | null>(null);
+  const [forceMode, setForceMode] = useState<'auto' | 'code' | 'deck'>('auto');
   const [prize, setPrize] = useState<PrizeAward | null>(null);
   const { refreshUser } = useAuth();
   const computerCtx = useComputer();
@@ -107,7 +173,7 @@ export default function AIChatPage() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, loading, actionSteps]);
+  }, [messages, loading]);
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -125,61 +191,175 @@ export default function AIChatPage() {
   const runCodeFlow = useCallback((trimmed: string) => {
     if (!projectName) setProjectName(trimmed.slice(0, 50));
 
-    const userMsg: DisplayMessage = { id: `user-${Date.now()}`, role: 'user', content: trimmed };
-    setMessages((prev) => [...prev, userMsg]);
+    const userMsg: ChatItem = { id: `user-${Date.now()}`, kind: 'user', content: trimmed };
+    const taskListId = `tasks-${Date.now()}`;
+    const taskList: ChatItem = {
+      id: taskListId,
+      kind: 'task-list',
+      title: trimmed.length > 60 ? `${trimmed.slice(0, 57)}…` : trimmed,
+      tasks: [],
+      status: 'running',
+    };
+    setMessages((prev) => [...prev, userMsg, taskList]);
     setInput('');
     setLoading(true);
     setRecentFiles(new Set());
 
-    setActionTitle(trimmed.slice(0, 60));
-    setActionSteps([{ id: 'init', label: 'Create initial files', status: 'active' }]);
-    setActionExpanded(true);
+    // Track the active assistant-text item id for this turn. A tool_call
+    // closes the current text segment; the next text_delta opens a new one.
+    let currentAssistantTextId: string | null = null;
 
-    const assistantId = `assistant-${Date.now()}`;
-    let textContent = '';
-    const toolsCollected: ToolUsed[] = [];
-    let initDone = false;
-
-    setMessages((prev) => [...prev, { id: assistantId, role: 'assistant', content: '', toolsUsed: [] }]);
+    // Helper: mutate the task-list item created above without disturbing its
+    // position in the messages array. Append-only on tasks; status updates only.
+    const mutateTaskList = (
+      mut: (curr: Extract<ChatItem, { kind: 'task-list' }>) => Extract<ChatItem, { kind: 'task-list' }>
+    ) => {
+      setMessages((prev) =>
+        prev.map((m) => (m.id === taskListId && m.kind === 'task-list' ? mut(m) : m))
+      );
+    };
 
     const allMsgs = [...messages, userMsg];
-    const history: ChatMessage[] = allMsgs.map((m) => ({ role: m.role, content: m.content }));
+    const history: ChatMessage[] = toApiHistory(allMsgs);
 
     abortRef.current = streamAgent(history, workspace.toRecord(), {
       onTextDelta(content) {
-        textContent += content;
-        setMessages((prev) => prev.map((m) => m.id === assistantId ? { ...m, content: textContent } : m));
+        if (currentAssistantTextId === null) {
+          const id = `asst-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+          currentAssistantTextId = id;
+          setMessages((prev) => [
+            ...prev,
+            { id, kind: 'assistant-text', content },
+          ]);
+        } else {
+          const id = currentAssistantTextId;
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === id && m.kind === 'assistant-text'
+                ? { ...m, content: m.content + content }
+                : m
+            )
+          );
+        }
       },
       onFileWrite(path, content) {
         const isUpdate = workspace.files.has(path);
         workspace.setFile(path, content);
         setRecentFiles((prev) => new Set(prev).add(path));
 
-        if (!initDone) {
-          setActionSteps((prev) => prev.map((s) => s.id === 'init' ? { ...s, status: 'done' } : s));
-          initDone = true;
-        }
-        const stepId = `file-${path}-${Date.now()}`;
-        setActionSteps((prev) => [
-          ...prev.map((s) => s.status === 'active' ? { ...s, status: 'done' as const } : s),
-          { id: stepId, label: `${isUpdate ? 'Update' : 'Create'} ${path}`, path, status: 'done' },
-        ]);
+        // Mirror into the task-list as a "Create / Update [path]" task in done state.
+        // Order is the order Mr8 wrote the files in.
+        mutateTaskList((curr) => {
+          const taskId = `task-file-${path}`;
+          const existing = curr.tasks.find((t) => t.id === taskId);
+          if (existing) {
+            return {
+              ...curr,
+              tasks: curr.tasks.map((t) =>
+                t.id === taskId ? { ...t, status: 'done' as const } : t
+              ),
+            };
+          }
+          return {
+            ...curr,
+            tasks: [
+              ...curr.tasks,
+              {
+                id: taskId,
+                label: `${isUpdate ? 'Update' : 'Create'} ${path}`,
+                status: 'done',
+              },
+            ],
+          };
+        });
       },
       onFileDelete(path) {
         workspace.deleteFile(path);
+        mutateTaskList((curr) => ({
+          ...curr,
+          tasks: [
+            ...curr.tasks,
+            { id: `task-del-${path}`, label: `Delete ${path}`, status: 'done' },
+          ],
+        }));
       },
       onToolCall(name, input) {
-        toolsCollected.push({ name, input });
-        setMessages((prev) => prev.map((m) => m.id === assistantId ? { ...m, toolsUsed: [...toolsCollected] } : m));
+        const id = `tool-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        setMessages((prev) => [
+          ...prev,
+          { id, kind: 'tool-call', tool: name, input, status: 'running' },
+        ]);
+        // Tool call closes the current text segment — next delta starts a new one below.
+        currentAssistantTextId = null;
 
-        if (name === 'write_file' && (input as Record<string, string>).path === 'package.json') {
-          setActionSteps((prev) => [
-            ...prev,
-            { id: 'pkg', label: 'Update package.json', status: 'active' },
-          ]);
+        // Auto-launch the right surface for the kind of work that just started.
+        // If the user previously dismissed the artifact panel, force it back
+        // open — Mr8 picked up a tool, the user should see what he's doing.
+        if (name === 'write_file' || name === 'delete_file') {
+          setPanelDismissed(false);
+          setRightTab((t) => (t === 'computer' ? 'preview' : t));
+        }
+        if (name === 'browser' || name.startsWith('browser:') || name === 'python_execution') {
+          setPanelDismissed(false);
+          setRightTab('computer');
+
+          // Surface browser/python tool calls as task-list entries too.
+          const obj = (input ?? {}) as Record<string, unknown>;
+          const action = String(obj.action ?? name.split(':')[1] ?? name);
+          const target = String(
+            obj.url ?? obj.query ?? obj.selector ?? obj.text ?? action
+          ).slice(0, 80);
+          mutateTaskList((curr) => ({
+            ...curr,
+            tasks: [
+              ...curr.tasks,
+              {
+                id: `task-${id}`,
+                label:
+                  name === 'python_execution'
+                    ? `Run python script`
+                    : `Browser · ${action} ${target}`.trim(),
+                status: 'running',
+              },
+            ],
+          }));
         }
       },
-      onToolResult() {},
+      onToolResult() {
+        // Mark the most recent running tool-call as done, and the corresponding
+        // running task in the task-list. Phase 3 will thread tool_use_id-matched
+        // results through; this is the best-effort version.
+        setMessages((prev) => {
+          let next = prev;
+          // Last running tool-call → done
+          for (let i = next.length - 1; i >= 0; i--) {
+            const m = next[i];
+            if (m.kind === 'tool-call' && m.status === 'running') {
+              next = next.slice();
+              next[i] = { ...m, status: 'done' };
+              break;
+            }
+          }
+          // Last running task in the task-list → done
+          for (let i = next.length - 1; i >= 0; i--) {
+            const m = next[i];
+            if (m.kind === 'task-list') {
+              const lastRunning = [...m.tasks].reverse().find((t) => t.status === 'running');
+              if (lastRunning) {
+                next = next.slice();
+                next[i] = {
+                  ...m,
+                  tasks: m.tasks.map((t) =>
+                    t.id === lastRunning.id ? { ...t, status: 'done' as const } : t
+                  ),
+                };
+              }
+              break;
+            }
+          }
+          return next;
+        });
+      },
       onPrizeAwarded(award) {
         const colors = ['#FB7701', '#FFB800', '#FFFFFF', '#FF9A3C', '#0B8800'];
         confetti({
@@ -198,59 +378,89 @@ export default function AIChatPage() {
         refreshUser();
       },
       onError(message) {
-        if (!textContent) {
-          textContent = message;
-          setMessages((prev) => prev.map((m) => m.id === assistantId ? { ...m, content: textContent } : m));
-        }
+        // If no text yet this turn, surface the error as an assistant-text item.
+        setMessages((prev) => {
+          if (currentAssistantTextId !== null) return prev;
+          return [
+            ...prev,
+            { id: `asst-err-${Date.now()}`, kind: 'assistant-text', content: message },
+          ];
+        });
+        mutateTaskList((curr) => ({ ...curr, status: 'error' }));
       },
       onDone() {
         setLoading(false);
         abortRef.current = null;
-        setActionSteps((prev) => prev.map((s) => ({ ...s, status: 'done' as const })));
 
-        if (workspace.files.has('package.json')) {
-          setActionSteps((prev) => [
-            ...prev,
-            { id: 'install', label: 'Install dependencies', isCommand: true, status: 'done', output: 'npm install' },
-          ]);
-        }
+        // Mark the task list complete and any straggling running tasks as done.
+        mutateTaskList((curr) => ({
+          ...curr,
+          status: 'done',
+          tasks: curr.tasks.map((t) =>
+            t.status === 'running' ? { ...t, status: 'done' as const } : t
+          ),
+        }));
 
-        if (!textContent && workspace.files.size > 0) {
+        // Final fallback: if the agent finished with files but never spoke,
+        // append a short assistant note so the transcript isn't silent.
+        setMessages((prev) => {
+          const wroteText = prev.some(
+            (m) => m.kind === 'assistant-text' && m.content.length > 0
+          );
+          if (wroteText || workspace.files.size === 0) return prev;
           const fileCount = workspace.files.size;
-          textContent = `Project ready with ${fileCount} files. Switch to the **Preview** tab to see it live.`;
-          setMessages((prev) => prev.map((m) => m.id === assistantId ? { ...m, content: textContent } : m));
-        }
+          return [
+            ...prev,
+            {
+              id: `asst-fin-${Date.now()}`,
+              kind: 'assistant-text',
+              content: `Project ready with ${fileCount} files. Switch to the **Preview** tab to see it live.`,
+            },
+          ];
+        });
       },
     }, selectedModel);
   }, [loading, messages, workspace, projectName, selectedModel]);
 
   const runComputerFlow = useCallback((trimmed: string) => {
-    const userMsg: DisplayMessage = { id: `user-${Date.now()}`, role: 'user', content: trimmed };
+    const userMsg: ChatItem = { id: `user-${Date.now()}`, kind: 'user', content: trimmed };
     setMessages((prev) => [...prev, userMsg]);
     setInput('');
     setLoading(true);
     computerCtx.setMode('compact');
 
-    const assistantId = `assistant-${Date.now()}`;
-    let textContent = '';
-    setMessages((prev) => [...prev, { id: assistantId, role: 'assistant', content: '', toolsUsed: [] }]);
-
+    let currentAssistantTextId: string | null = null;
     const allMsgs = [...messages, userMsg];
-    const history: ChatMessage[] = allMsgs.map((m) => ({ role: m.role, content: m.content }));
+    const history: ChatMessage[] = toApiHistory(allMsgs);
 
     startComputer({
       messages: history,
       workspace: workspace.toRecord(),
       model: selectedModel,
       onTextDelta(text) {
-        textContent += text;
-        setMessages((prev) => prev.map((m) => m.id === assistantId ? { ...m, content: textContent } : m));
+        if (currentAssistantTextId === null) {
+          const id = `asst-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+          currentAssistantTextId = id;
+          setMessages((prev) => [...prev, { id, kind: 'assistant-text', content: text }]);
+        } else {
+          const id = currentAssistantTextId;
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === id && m.kind === 'assistant-text'
+                ? { ...m, content: m.content + text }
+                : m
+            )
+          );
+        }
       },
       onError(message) {
-        if (!textContent) {
-          textContent = message;
-          setMessages((prev) => prev.map((m) => m.id === assistantId ? { ...m, content: textContent } : m));
-        }
+        setMessages((prev) => {
+          if (currentAssistantTextId !== null) return prev;
+          return [
+            ...prev,
+            { id: `asst-err-${Date.now()}`, kind: 'assistant-text', content: message },
+          ];
+        });
       },
       onDone() {
         setLoading(false);
@@ -258,48 +468,207 @@ export default function AIChatPage() {
     });
   }, [messages, workspace, selectedModel, computerCtx, startComputer]);
 
-  const runDeckWithResearch = useCallback(async (trimmed: string, researchQuery: string) => {
+  /**
+   * Inline deck flow — Manus-style. Pushes user msg, an assistant intro,
+   * a research tool-call card, then a generate_deck tool-call card whose
+   * result counts slides as they stream. On complete, navigate to /decks/:id.
+   * No wizard modal, no floating banner.
+   */
+  const runDeckFlow = useCallback(async (trimmed: string, researchQuery?: string) => {
     setInput('');
-    setResearching(researchQuery);
-    computerCtx.setMode('compact');
+    setLoading(true);
 
-    const userMsg: DisplayMessage = { id: `user-${Date.now()}`, role: 'user', content: trimmed };
-    const notice: DisplayMessage = {
-      id: `notice-${Date.now()}`,
-      role: 'assistant',
-      content: `Researching "${researchQuery}" before building your deck…`,
+    const userMsg: ChatItem = { id: `user-${Date.now()}`, kind: 'user', content: trimmed };
+    const intro: ChatItem = {
+      id: `asst-${Date.now() + 1}`,
+      kind: 'assistant-text',
+      content: researchQuery
+        ? `I'll research **${researchQuery}** and then build your deck.`
+        : `I'll build your deck.`,
     };
-    setMessages((prev) => [...prev, userMsg, notice]);
+    const taskListId = `tasks-${Date.now()}`;
+    const initialTasks: TaskListTask[] = [
+      ...(researchQuery
+        ? [{ id: 'task-research', label: `Research ${researchQuery}`, status: 'running' as const }]
+        : []),
+      { id: 'task-generate', label: 'Generate slides', status: 'pending' as const },
+      { id: 'task-open', label: 'Open deck editor', status: 'pending' as const },
+    ];
+    const taskList: ChatItem = {
+      id: taskListId,
+      kind: 'task-list',
+      title: trimmed.length > 60 ? `${trimmed.slice(0, 57)}…` : trimmed,
+      tasks: initialTasks,
+      status: 'running',
+    };
+    setMessages((prev) => [...prev, userMsg, intro, taskList]);
 
-    try {
-      const brief = await requestResearch(researchQuery);
-      setResearching(null);
-      setDeckModalPrompt(trimmed);
-      setDeckModalBrief(brief ?? undefined);
-    } catch {
-      setResearching(null);
-      setDeckModalPrompt(trimmed);
-      setDeckModalBrief(undefined);
+    const setTask = (taskId: string, status: TaskListTask['status']) => {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === taskListId && m.kind === 'task-list'
+            ? {
+                ...m,
+                tasks: m.tasks.map((t) => (t.id === taskId ? { ...t, status } : t)),
+              }
+            : m
+        )
+      );
+    };
+    const setOverall = (status: 'running' | 'done' | 'error') => {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === taskListId && m.kind === 'task-list' ? { ...m, status } : m
+        )
+      );
+    };
+
+    // 1. Research step (if a query was provided).
+    let brief: Awaited<ReturnType<typeof requestResearch>> = null;
+    const researchCardId = `tool-research-${Date.now()}`;
+    if (researchQuery) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: researchCardId,
+          kind: 'tool-call',
+          tool: 'research',
+          input: { query: researchQuery },
+          status: 'running',
+        },
+      ]);
+      try {
+        brief = await requestResearch(researchQuery);
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === researchCardId && m.kind === 'tool-call'
+              ? {
+                  ...m,
+                  status: 'done',
+                  result: brief
+                    ? { facts: brief.keyFacts?.length ?? 0, sources: brief.sources?.length ?? 0 }
+                    : { error: 'no brief returned' },
+                }
+              : m
+          )
+        );
+        setTask('task-research', 'done');
+      } catch (err) {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === researchCardId && m.kind === 'tool-call'
+              ? { ...m, status: 'error', result: { error: (err as Error).message } }
+              : m
+          )
+        );
+        setTask('task-research', 'error');
+      }
     }
-  }, [computerCtx]);
+    setTask('task-generate', 'running');
+
+    // 2. Generate deck step (always runs, with or without research context).
+    const slideCount = 8;
+    const genCardId = `tool-gen-${Date.now()}`;
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: genCardId,
+        kind: 'tool-call',
+        tool: 'generate_deck',
+        input: { topic: trimmed, slideCount, style: 'professional' },
+        status: 'running',
+        result: { slidesReceived: 0, slideCount },
+      },
+    ]);
+
+    abortRef.current = streamDeckGeneration(
+      {
+        topic: trimmed,
+        slideCount,
+        style: 'professional',
+        ...(brief ? { researchBrief: brief } : {}),
+      },
+      {
+        onStarted() {
+          // already pushed
+        },
+        onSlideReceived(slide) {
+          setMessages((prev) =>
+            prev.map((m) => {
+              if (m.id !== genCardId || m.kind !== 'tool-call') return m;
+              const r = (m.result ?? {}) as { slidesReceived?: number; slideCount?: number; titles?: string[] };
+              const slideTitle =
+                (slide.content as { title?: string } | undefined)?.title ??
+                `Slide ${(r.slidesReceived ?? 0) + 1}`;
+              return {
+                ...m,
+                result: {
+                  slideCount: r.slideCount ?? slideCount,
+                  slidesReceived: (r.slidesReceived ?? 0) + 1,
+                  titles: [...(r.titles ?? []), slideTitle],
+                },
+              };
+            })
+          );
+        },
+        onComplete({ deckId, slideCount: total }) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === genCardId && m.kind === 'tool-call'
+                ? {
+                    ...m,
+                    status: 'done',
+                    result: {
+                      slideCount: total,
+                      slidesReceived: total,
+                      deckId,
+                    },
+                  }
+                : m
+            )
+          );
+          setTask('task-generate', 'done');
+          setTask('task-open', 'done');
+          setOverall('done');
+          setLoading(false);
+          navigate(`/decks/${deckId}`);
+        },
+        onPrizeAwarded(award) {
+          setPrize(award);
+          refreshUser();
+        },
+        onError(message) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === genCardId && m.kind === 'tool-call'
+                ? { ...m, status: 'error', result: { error: message } }
+                : m
+            )
+          );
+          setTask('task-generate', 'error');
+          setOverall('error');
+          setLoading(false);
+        },
+      }
+    );
+  }, [navigate, refreshUser]);
 
   const sendMessage = useCallback(async (text: string) => {
     const trimmed = text.trim();
     if (!trimmed || loading) return;
 
+    // Reset any artifact-panel dismissal — a new turn deserves a fresh chance
+    // to auto-reveal whatever it produces.
+    setPanelDismissed(false);
+
     // Explicit overrides via the mode toggle
     if (forceMode === 'deck') {
-      setDeckModalPrompt(trimmed);
-      setDeckModalBrief(undefined);
-      setInput('');
+      // Mr8 researches the topic, then builds the deck — fully inline, no modal.
+      await runDeckFlow(trimmed, trimmed);
       return;
     }
     if (forceMode === 'code') {
       runCodeFlow(trimmed);
-      return;
-    }
-    if (forceMode === 'computer') {
-      runComputerFlow(trimmed);
       return;
     }
 
@@ -312,11 +681,9 @@ export default function AIChatPage() {
           return;
         }
         if (result.intent === 'deck' && result.confidence > 0.7) {
-          if (result.needsResearch && result.researchQuery) {
-            await runDeckWithResearch(trimmed, result.researchQuery);
-            return;
-          }
-          setDeckConfirm({ prompt: trimmed, confidence: result.confidence });
+          // Always go straight to the inline deck flow — no confirmation dialog,
+          // no wizard. Mr8 just gets to work.
+          await runDeckFlow(trimmed, result.researchQuery ?? trimmed);
           return;
         }
       } catch {
@@ -325,7 +692,7 @@ export default function AIChatPage() {
     }
 
     runCodeFlow(trimmed);
-  }, [loading, forceMode, messages.length, runCodeFlow, runComputerFlow, runDeckWithResearch]);
+  }, [loading, forceMode, messages.length, runCodeFlow, runComputerFlow, runDeckFlow]);
 
   useEffect(() => {
     if (initialPromptRef.current) return;
@@ -354,14 +721,13 @@ export default function AIChatPage() {
         const uid = `user-${Date.now()}`;
         const aid = `assistant-${Date.now() + 1}`;
         setMessages([
-          { id: uid, role: 'user', content: parsed.prompt },
+          { id: uid, kind: 'user', content: parsed.prompt },
           {
             id: aid,
-            role: 'assistant',
+            kind: 'assistant-text',
             content:
               parsed.assistantText ||
               'Your preview is live. Say what you want to change and I will extend it.',
-            toolsUsed: [],
           },
         ]);
         return;
@@ -417,13 +783,15 @@ export default function AIChatPage() {
     navigate('/feed');
   }, [workspace, projectName, navigate]);
 
-  const hasActions = actionSteps.length > 0;
+  const hasArtifact =
+    workspace.files.size > 0 || computerCtx.state.timeline.length > 0;
+  const artifactOpen = hasArtifact && !panelDismissed;
 
   return (
-    <div className="h-full flex flex-col bg-[#0A0A0A]">
-      <div className="h-12 flex items-center justify-between px-4 border-b border-[#1A1A1A] bg-gradient-to-b from-[#0D1117] to-[#0A0A0A] flex-shrink-0">
+    <div className="h-full flex flex-col bg-white dark:bg-[#0A0A0A]">
+      <div className="h-12 flex items-center justify-between px-4 border-b border-edge dark:border-[#1A1A1A] bg-white dark:bg-gradient-to-b dark:from-[#0D1117] dark:to-[#0A0A0A] flex-shrink-0">
         <div className="w-[180px]" />
-        <div className="flex items-center gap-1 text-sm text-[#A0A0A0]">
+        <div className="flex items-center gap-1 text-sm text-ink-secondary dark:text-[#A0A0A0]">
           {projectName && (
             editingName ? (
               <input
@@ -432,10 +800,10 @@ export default function AIChatPage() {
                 onChange={(e) => setProjectName(e.target.value)}
                 onBlur={() => setEditingName(false)}
                 onKeyDown={(e) => { if (e.key === 'Enter') setEditingName(false); }}
-                className="bg-transparent text-[#E8E8E8] text-sm text-center border-b border-[#3B82F6] focus:outline-none w-60"
+                className="bg-transparent text-ink dark:text-[#E8E8E8] text-sm text-center border-b border-brand-orange dark:border-[#3B82F6] focus:outline-none w-60"
               />
             ) : (
-              <button onClick={() => setEditingName(true)} className="flex items-center gap-1 hover:text-[#E8E8E8] transition-colors">
+              <button onClick={() => setEditingName(true)} className="flex items-center gap-1 text-ink-secondary dark:text-[#A0A0A0] hover:text-ink dark:hover:text-[#E8E8E8] transition-colors">
                 <span>{projectName}</span>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <polyline points="6 9 12 15 18 9" />
@@ -447,7 +815,7 @@ export default function AIChatPage() {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowSettings(true)}
-            className="p-1.5 text-[#666] hover:text-[#A0A0A0] transition-colors"
+            className="p-1.5 text-ink-tertiary dark:text-[#666] hover:text-ink dark:hover:text-[#A0A0A0] transition-colors"
             title="Settings"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -458,7 +826,7 @@ export default function AIChatPage() {
             <>
               <button
                 onClick={handleDownload}
-                className="px-3 py-1.5 text-xs text-[#A0A0A0] border border-[#333] rounded-md hover:text-[#E8E8E8] hover:border-[#555] transition-colors flex items-center gap-1.5"
+                className="px-3 py-1.5 text-xs text-ink-secondary dark:text-[#A0A0A0] border border-edge dark:border-[#333] rounded-md hover:text-ink dark:hover:text-[#E8E8E8] hover:border-ink-tertiary dark:hover:border-[#555] transition-colors flex items-center gap-1.5"
               >
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
@@ -479,21 +847,31 @@ export default function AIChatPage() {
       </div>
 
       <div className="flex-1 flex overflow-hidden">
-        <div className="w-[40%] min-w-[340px] max-w-[500px] flex flex-col bg-[#0F0F0F] border-r border-[#1A1A1A]">
-          <div className="flex-1 overflow-y-auto px-5 py-4 subtle-scrollbar">
+        <div
+          className={`flex flex-col transition-[width] duration-300 ease-out ${
+            artifactOpen
+              ? 'w-[420px] min-w-[360px] flex-shrink-0 bg-surface-secondary dark:bg-[#0F0F0F] border-r border-edge dark:border-[#1A1A1A]'
+              : 'flex-1 bg-white dark:bg-[#0A0A0A]'
+          }`}
+        >
+          <div
+            className={`flex-1 overflow-y-auto px-5 py-4 subtle-scrollbar ${
+              artifactOpen ? '' : 'mx-auto w-full max-w-4xl'
+            }`}
+          >
             {messages.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full">
                 <div className="flex items-center gap-2 mb-2">
-                  <span className="text-[15px] text-[#E8E8E8]">What do you want to build?</span>
+                  <span className="text-[15px] text-ink dark:text-[#E8E8E8]">What do you want to build?</span>
                 </div>
-                <p className="text-xs text-[#666] mb-6">React + TypeScript + Tailwind apps</p>
+                <p className="text-xs text-ink-tertiary dark:text-[#666] mb-6">React + TypeScript + Tailwind apps</p>
                 <div className="grid grid-cols-2 gap-2 max-w-sm">
                   {SUGGESTION_CHIPS.map((chip) => (
                     <button
                       key={chip}
                       onClick={() => sendMessage(chip)}
                       disabled={loading}
-                      className="text-left text-xs text-[#A0A0A0] bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-3 py-2.5 hover:bg-[#222] hover:text-[#E8E8E8] transition-colors"
+                      className="text-left text-xs text-ink-secondary dark:text-[#A0A0A0] bg-white dark:bg-[#1A1A1A] border border-edge dark:border-[#2A2A2A] rounded-lg px-3 py-2.5 hover:bg-surface-tertiary dark:hover:bg-[#222] hover:text-ink dark:hover:text-[#E8E8E8] transition-colors"
                     >
                       {chip}
                     </button>
@@ -502,35 +880,51 @@ export default function AIChatPage() {
               </div>
             ) : (
               <div className="space-y-4">
-                {messages.map((msg) => (
-                  <div key={msg.id} className="animate-fade-slide-up">
-                    {msg.role === 'user' ? (
-                      <div className="flex items-start gap-3">
-                        <div className="w-7 h-7 rounded-full bg-[#333] text-[#E8E8E8] text-[10px] font-medium flex items-center justify-center flex-shrink-0 mt-0.5">
+                {messages.map((msg) => {
+                  if (msg.kind === 'user') {
+                    return (
+                      <div key={msg.id} className="animate-fade-slide-up flex items-start gap-3">
+                        <div className="w-7 h-7 rounded-full bg-surface-tertiary dark:bg-[#333] text-ink dark:text-[#E8E8E8] text-[10px] font-medium flex items-center justify-center flex-shrink-0 mt-0.5">
                           U
                         </div>
-                        <p className="text-sm text-[#E8E8E8] pt-1">{msg.content}</p>
+                        <p className="text-sm text-ink dark:text-[#E8E8E8] pt-1">{msg.content}</p>
                       </div>
-                    ) : (
-                      <div>
-                        <div className="text-sm max-w-none">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-                            {msg.content}
-                          </ReactMarkdown>
-                        </div>
+                    );
+                  }
+                  if (msg.kind === 'assistant-text') {
+                    return (
+                      <div key={msg.id} className="animate-fade-slide-up text-sm max-w-none">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+                          {msg.content}
+                        </ReactMarkdown>
                       </div>
-                    )}
-                  </div>
-                ))}
-
-                {hasActions && (
-                  <ActionCard
-                    title={actionTitle}
-                    steps={actionSteps}
-                    expanded={actionExpanded}
-                    onToggle={() => setActionExpanded((v) => !v)}
-                  />
-                )}
+                    );
+                  }
+                  if (msg.kind === 'tool-call') {
+                    return (
+                      <div key={msg.id} className="animate-fade-slide-up">
+                        <ToolCallCard
+                          tool={msg.tool}
+                          input={msg.input}
+                          result={msg.result}
+                          status={msg.status}
+                        />
+                      </div>
+                    );
+                  }
+                  if (msg.kind === 'task-list') {
+                    return (
+                      <div key={msg.id} className="animate-fade-slide-up">
+                        <TaskListCard
+                          title={msg.title}
+                          tasks={msg.tasks}
+                          status={msg.status}
+                        />
+                      </div>
+                    );
+                  }
+                  return null;
+                })}
 
                 {loading && (
                   <div className="py-2">
@@ -545,8 +939,12 @@ export default function AIChatPage() {
             )}
           </div>
 
-          <div className="p-4 flex-shrink-0 space-y-2.5">
-            <div className="bg-[#1A1A1A] border border-[#333] rounded-xl overflow-hidden">
+          <div
+            className={`p-4 flex-shrink-0 space-y-2.5 ${
+              artifactOpen ? '' : 'mx-auto w-full max-w-4xl'
+            }`}
+          >
+            <div className="bg-white dark:bg-[#1A1A1A] border border-edge dark:border-[#333] rounded-xl overflow-hidden shadow-sm">
               <textarea
                 ref={textareaRef}
                 value={input}
@@ -554,14 +952,14 @@ export default function AIChatPage() {
                 onKeyDown={handleKeyDown}
                 placeholder={forceMode === 'deck' ? 'Describe the deck you want…' : 'How can Mr8 help you today?'}
                 rows={1}
-                className="w-full px-4 py-3 bg-transparent text-[#E8E8E8] text-sm resize-none focus:outline-none placeholder:text-[#555] max-h-[200px]"
+                className="w-full px-4 py-3 bg-transparent text-ink dark:text-[#E8E8E8] text-sm resize-none focus:outline-none placeholder:text-ink-tertiary dark:placeholder:text-[#555] max-h-[200px]"
               />
               <div className="flex items-center justify-between px-3 pb-2">
                 <div className="flex items-center gap-1.5">
                   <select
                     value={selectedModel}
                     onChange={(e) => setSelectedModel(e.target.value)}
-                    className="text-[11px] bg-[#141414] border border-[#2A2A2A] text-[#888] rounded px-2 py-1 focus:outline-none focus:border-[#444] cursor-pointer"
+                    className="text-[11px] bg-surface-secondary dark:bg-[#141414] border border-edge dark:border-[#2A2A2A] text-ink-secondary dark:text-[#888] rounded px-2 py-1 focus:outline-none focus:border-ink-tertiary dark:focus:border-[#444] cursor-pointer"
                   >
                     <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
                     <option value="claude-sonnet-4-6">Sonnet 4.6</option>
@@ -569,92 +967,136 @@ export default function AIChatPage() {
                   </select>
                   <select
                     value={forceMode}
-                    onChange={(e) => setForceMode(e.target.value as 'auto' | 'code' | 'deck' | 'computer')}
-                    className="text-[11px] bg-[#141414] border border-[#2A2A2A] text-[#888] rounded px-2 py-1 focus:outline-none focus:border-[#444] cursor-pointer"
-                    title="Choose how Claude should respond"
+                    onChange={(e) => setForceMode(e.target.value as 'auto' | 'code' | 'deck')}
+                    className="text-[11px] bg-surface-secondary dark:bg-[#141414] border border-edge dark:border-[#2A2A2A] text-ink-secondary dark:text-[#888] rounded px-2 py-1 focus:outline-none focus:border-ink-tertiary dark:focus:border-[#444] cursor-pointer"
+                    title="Choose how Mr8 should respond. 'Auto' lets Mr8 pick the right tool."
                   >
                     <option value="auto">Auto</option>
                     <option value="code">Code app</option>
                     <option value="deck">Slide deck</option>
-                    <option value="computer">Mr8 Computer</option>
                   </select>
+                </div>
+                {/* Inline computer-status chip — shows only when Mr8's Computer
+                    has activity but the artifact panel is currently dismissed.
+                    Click reopens the panel on the Computer tab. */}
+                {computerCtx.state.timeline.length > 0 && !artifactOpen && (
                   <button
                     type="button"
                     onClick={() => {
-                      const t = input.trim();
-                      if (!t || loading) return;
-                      runComputerFlow(t);
+                      setPanelDismissed(false);
+                      setRightTab('computer');
                     }}
-                    disabled={loading || !input.trim()}
-                    className="text-[11px] bg-[#141414] border border-[#2A2A2A] text-[#FFB229] rounded px-2 py-1 focus:outline-none hover:border-[#FFB229] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
-                    title="Run this prompt through Mr8 Computer (browser + Python sandbox)"
+                    className="flex items-center gap-1.5 text-[11px] bg-surface-secondary dark:bg-[#141414] border border-edge dark:border-[#2A2A2A] text-ink dark:text-[#E8E8E8] rounded px-2 py-1 hover:border-brand-orange dark:hover:border-[#FFB229] transition-colors"
+                    title="Open Mr8's Computer"
                   >
-                    Use Mr8 Computer
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full ${
+                        computerCtx.state.timeline.some((t) => t.status === 'running')
+                          ? 'bg-status-live animate-pulse'
+                          : 'bg-status-live'
+                      }`}
+                    />
+                    <span className="font-mono text-ink-secondary dark:text-[#A0A0A0]">
+                      Mr8's Computer · {computerCtx.state.timeline.length}
+                    </span>
                   </button>
-                </div>
+                )}
               </div>
             </div>
             <button
               onClick={() => sendMessage(input)}
               disabled={loading || !input.trim()}
-              className="w-full py-3.5 bg-brand-orange hover:bg-brand-orange-hover disabled:bg-[#2A2A2A] disabled:text-[#666] disabled:cursor-not-allowed rounded-full text-white text-sm font-semibold transition-colors flex items-center justify-center gap-2 shadow-[0_4px_14px_rgba(251,119,1,0.35)] disabled:shadow-none"
+              className="w-full py-3.5 bg-brand-orange hover:bg-brand-orange-hover disabled:bg-surface-tertiary dark:disabled:bg-[#2A2A2A] disabled:text-ink-tertiary dark:disabled:text-[#666] disabled:cursor-not-allowed rounded-full text-white text-sm font-semibold transition-colors flex items-center justify-center gap-2 shadow-[0_4px_14px_rgba(251,119,1,0.35)] disabled:shadow-none"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <path d="M5 12h14m-7-7l7 7-7 7" />
               </svg>
-              {loading ? 'Working…' : forceMode === 'deck' ? 'Generate deck' : 'Send'}
+              {loading ? 'Working…' : 'Send'}
             </button>
           </div>
         </div>
 
-        <div className="flex-1 flex flex-col min-w-0 bg-[#0A0A0A]">
-          {computerCtx.state.panel.mode === 'expanded' ? (
-            <ComputerPanel />
-          ) : (
-            <>
-              <div className="flex items-center gap-1 px-3 py-2 border-b border-[#1A1A1A] flex-shrink-0">
-                {(['code', 'preview'] as const).map((tab) => (
+        {artifactOpen && (
+          <div
+            className="flex-1 flex flex-col min-w-0 bg-white dark:bg-[#0A0A0A] animate-fade-slide-up"
+            style={{ animationDuration: '300ms' }}
+          >
+            <div className="flex items-center gap-1 px-3 py-2 border-b border-edge dark:border-[#1A1A1A] flex-shrink-0">
+              {workspace.files.size > 0 && (
+                <>
                   <button
-                    key={tab}
-                    onClick={() => setRightTab(tab)}
+                    onClick={() => setRightTab('code')}
                     className={`px-3 py-1 text-sm rounded transition-colors ${
-                      rightTab === tab
-                        ? 'text-brand-orange bg-[#1A1A1A] font-semibold'
-                        : 'text-[#666] hover:text-[#A0A0A0]'
+                      rightTab === 'code'
+                        ? 'text-brand-orange bg-surface-tertiary dark:bg-[#1A1A1A] font-semibold'
+                        : 'text-ink-tertiary dark:text-[#666] hover:text-ink-secondary dark:hover:text-[#A0A0A0]'
                     }`}
                   >
-                    {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                    Code
                   </button>
-                ))}
-                {computerCtx.state.timeline.length > 0 && (
                   <button
-                    onClick={() => computerCtx.setMode('expanded')}
-                    className="ml-auto px-3 py-1 text-xs rounded text-[#FFB229] hover:bg-[#1A1A1A] transition-colors"
-                    title="Show Mr8 Computer activity"
+                    onClick={() => setRightTab('preview')}
+                    className={`px-3 py-1 text-sm rounded transition-colors ${
+                      rightTab === 'preview'
+                        ? 'text-brand-orange bg-surface-tertiary dark:bg-[#1A1A1A] font-semibold'
+                        : 'text-ink-tertiary dark:text-[#666] hover:text-ink-secondary dark:hover:text-[#A0A0A0]'
+                    }`}
                   >
-                    Mr8 Computer ({computerCtx.state.timeline.length}) ↗
+                    Preview
                   </button>
-                )}
-              </div>
+                </>
+              )}
+              {computerCtx.state.timeline.length > 0 && (
+                <button
+                  onClick={() => setRightTab('computer')}
+                  className={`px-3 py-1 text-sm rounded transition-colors flex items-center gap-1.5 ${
+                    rightTab === 'computer'
+                      ? 'text-brand-orange bg-surface-tertiary dark:bg-[#1A1A1A] font-semibold'
+                      : 'text-[#B37600] dark:text-[#FFB229] hover:bg-surface-tertiary dark:hover:bg-[#1A1A1A]'
+                  }`}
+                  title="Mr8's Computer activity"
+                >
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      computerCtx.state.timeline.some((t) => t.status === 'running')
+                        ? 'bg-status-live animate-pulse'
+                        : 'bg-status-live'
+                    }`}
+                  />
+                  Mr8's Computer
+                </button>
+              )}
+              <button
+                onClick={() => setPanelDismissed(true)}
+                className="ml-auto p-1 rounded text-ink-tertiary dark:text-[#666] hover:text-ink dark:hover:text-[#E8E8E8] hover:bg-surface-tertiary dark:hover:bg-[#1A1A1A] transition-colors"
+                title="Close panel"
+                aria-label="Close artifact panel"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M18 6L6 18M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
 
-              <div className="flex-1 min-h-0">
-                {rightTab === 'code' ? (
-                  <WorkspacePanel
-                    workspace={workspace}
-                    recentFiles={recentFiles}
-                    terminalLogs={terminalLogs}
-                  />
-                ) : (
-                  <PreviewPanel
-                    files={workspace.files}
-                    isGenerating={loading}
-                    fallbackHtml={workspace.previewHtml}
-                  />
-                )}
-              </div>
-            </>
-          )}
-        </div>
+            <div className="flex-1 min-h-0">
+              {rightTab === 'computer' ? (
+                <ComputerPanel />
+              ) : rightTab === 'code' ? (
+                <WorkspacePanel
+                  workspace={workspace}
+                  recentFiles={recentFiles}
+                  terminalLogs={terminalLogs}
+                />
+              ) : (
+                <PreviewPanel
+                  files={workspace.files}
+                  isGenerating={loading}
+                  fallbackHtml={workspace.previewHtml}
+                />
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {showSettings && (
@@ -663,77 +1105,6 @@ export default function AIChatPage() {
           onProjectNameChange={setProjectName}
           onClose={() => setShowSettings(false)}
         />
-      )}
-
-      {deckConfirm && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-          <div className="bg-[#141414] border border-[#2A2A2A] rounded-lg w-full max-w-md p-5">
-            <div className="text-sm font-semibold text-[#E8E8E8] mb-1">
-              Looks like you want slides, not an app
-            </div>
-            <div className="text-xs text-[#888] mb-4">
-              Mr8 can generate a full Gartner-style deck from this prompt. Or continue building it as a code app.
-            </div>
-            <div className="bg-[#0A0A0A] border border-[#2A2A2A] rounded p-3 text-xs text-[#A0A0A0] mb-4 max-h-32 overflow-y-auto">
-              {deckConfirm.prompt}
-            </div>
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  const prompt = deckConfirm.prompt;
-                  setDeckConfirm(null);
-                  runCodeFlow(prompt);
-                }}
-                className="px-3 py-1.5 text-xs text-[#A0A0A0] hover:text-[#E8E8E8]"
-              >
-                Build as app
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const prompt = deckConfirm.prompt;
-                  setDeckConfirm(null);
-                  setInput('');
-                  setDeckModalPrompt(prompt);
-                }}
-                className="px-4 py-1.5 text-xs bg-brand-orange hover:bg-brand-orange-hover text-white rounded-full font-semibold flex items-center gap-1.5 shadow-[0_2px_8px_rgba(251,119,1,0.4)]"
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M12 2L15 9L22 10L17 15L18 22L12 19L6 22L7 15L2 10L9 9L12 2z" />
-                </svg>
-                Generate deck
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {deckModalPrompt && (
-        <GenerateDeckModal
-          initialTopic={deckModalPrompt}
-          researchBrief={deckModalBrief}
-          onClose={() => {
-            setDeckModalPrompt(null);
-            setDeckModalBrief(undefined);
-          }}
-          onComplete={(deckId) => {
-            setDeckModalPrompt(null);
-            setDeckModalBrief(undefined);
-            navigate(`/decks/${deckId}`);
-          }}
-        />
-      )}
-
-      {researching && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 bg-[#141414] border border-[#FFB229] rounded-full px-5 py-2.5 shadow-[0_8px_24px_rgba(0,0,0,0.6)]">
-          <div className="flex items-center gap-3">
-            <div className="w-2 h-2 rounded-full bg-[#FFB229] animate-pulse" />
-            <span className="text-xs text-[#E8E8E8] font-mono">
-              Researching: {researching}
-            </span>
-          </div>
-        </div>
       )}
 
       {prize && <PrizeModal prize={prize} onClose={() => setPrize(null)} />}

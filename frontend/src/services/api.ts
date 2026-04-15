@@ -7,7 +7,9 @@ import type {
 } from '../types/deck';
 import type { PrizeAward } from '../types';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+import { getApiBase } from '../lib/apiBase';
+
+const API_URL = getApiBase();
 
 export { API_URL };
 

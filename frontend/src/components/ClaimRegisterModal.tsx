@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -7,6 +7,7 @@ import confetti from 'canvas-confetti';
 import { useAuth } from '../contexts/AuthContext';
 import { adoptAnonBuild } from '../services/anonBuildStream';
 import mr8Logo from '../assets/mr8-logo.png';
+import { getApiBase } from '../lib/apiBase';
 
 const registerSchema = z.object({
   username: z.string().min(3, 'Min 3 characters').max(20, 'Max 20 characters'),
@@ -17,10 +18,13 @@ const registerSchema = z.object({
 type RegisterForm = z.infer<typeof registerSchema>;
 
 interface Props {
-  buildId: string;
+  buildId: string | null;
   prompt: string;
   prizeCents: number;
 }
+
+const ADOPTION_POLL_INTERVAL_MS = 150;
+const ADOPTION_WAIT_TIMEOUT_MS = 25_000;
 
 export const ADOPTED_BUILD_STORAGE_KEY = 'mr8-adopted-build';
 
@@ -48,6 +52,14 @@ export default function ClaimRegisterModal({ buildId, prompt, prizeCents }: Prop
   const { register: registerUser } = useAuth();
   const [error, setError] = useState('');
   const [claiming, setClaiming] = useState(false);
+  const [waitingForBuild, setWaitingForBuild] = useState(false);
+
+  // Keep the latest buildId readable from within async flows so a slow
+  // stream can still adopt once onDone finally fires.
+  const buildIdRef = useRef<string | null>(buildId);
+  useEffect(() => {
+    buildIdRef.current = buildId;
+  }, [buildId]);
 
   const {
     register,
@@ -57,8 +69,28 @@ export default function ClaimRegisterModal({ buildId, prompt, prizeCents }: Prop
     resolver: zodResolver(registerSchema),
   });
 
-  const completeAdoption = async (accessToken: string) => {
-    const result = await adoptAnonBuild(buildId, accessToken);
+  const waitForBuildId = (): Promise<string | null> =>
+    new Promise((resolve) => {
+      if (buildIdRef.current) {
+        resolve(buildIdRef.current);
+        return;
+      }
+      const started = Date.now();
+      const poll = setInterval(() => {
+        if (buildIdRef.current) {
+          clearInterval(poll);
+          resolve(buildIdRef.current);
+          return;
+        }
+        if (Date.now() - started >= ADOPTION_WAIT_TIMEOUT_MS) {
+          clearInterval(poll);
+          resolve(null);
+        }
+      }, ADOPTION_POLL_INTERVAL_MS);
+    });
+
+  const completeAdoption = async (accessToken: string, resolvedBuildId: string) => {
+    const result = await adoptAnonBuild(resolvedBuildId, accessToken);
     const handoff: AdoptedBuildHandoff = {
       prompt: result.prompt,
       files: result.files,
@@ -77,7 +109,23 @@ export default function ClaimRegisterModal({ buildId, prompt, prizeCents }: Prop
       await registerUser(data.username, data.email, data.password);
       const token = localStorage.getItem('accessToken');
       if (!token) throw new Error('Missing session token');
-      await completeAdoption(token);
+
+      let resolvedBuildId = buildIdRef.current;
+      if (!resolvedBuildId) {
+        setWaitingForBuild(true);
+        resolvedBuildId = await waitForBuildId();
+        setWaitingForBuild(false);
+      }
+
+      if (resolvedBuildId) {
+        await completeAdoption(token, resolvedBuildId);
+      } else {
+        // Stream still hasn't completed — take the user to /chat anyway so
+        // they aren't stranded. The welcome-bonus flow on first visit covers
+        // the credit so the $5 still lands.
+        fireClaimConfetti();
+        navigate('/chat', { replace: true });
+      }
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { message?: string } } }).response?.data?.message ||
@@ -85,15 +133,17 @@ export default function ClaimRegisterModal({ buildId, prompt, prizeCents }: Prop
         'Could not claim your build';
       setError(msg);
       setClaiming(false);
+      setWaitingForBuild(false);
     }
   };
 
   const handleGoogle = () => {
     sessionStorage.setItem(
       'mr8-pending-adopt',
-      JSON.stringify({ buildId, prompt, prizeCents })
+      JSON.stringify({ buildId: buildIdRef.current, prompt, prizeCents })
     );
-    window.location.href = 'http://localhost:5000/api/auth/google';
+    const returnTo = encodeURIComponent(window.location.origin);
+    window.location.href = `${getApiBase()}/auth/google?returnTo=${returnTo}`;
   };
 
   const prizeDollars = (prizeCents / 100).toFixed(prizeCents % 100 === 0 ? 0 : 2);
@@ -204,7 +254,7 @@ export default function ClaimRegisterModal({ buildId, prompt, prizeCents }: Prop
               className="w-full py-3 mt-2 bg-brand-orange hover:bg-brand-orange-hover disabled:opacity-70 rounded-full text-white text-sm font-bold tracking-wide shadow-[0_8px_24px_rgba(251,119,1,0.5)] transition-colors flex items-center justify-center gap-2"
             >
               {claiming ? (
-                'Claiming...'
+                waitingForBuild ? 'Finishing your build…' : 'Claiming…'
               ) : (
                 <>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">

@@ -20,7 +20,7 @@ export function FloatingThumbnail(): JSX.Element | null {
       <style>{KEYFRAMES}</style>
       <button
         type="button"
-        aria-label="Expand Mr8 Computer"
+        aria-label="Expand Mr8's Computer"
         onClick={() => setMode('expanded')}
         style={{
           position: 'fixed',

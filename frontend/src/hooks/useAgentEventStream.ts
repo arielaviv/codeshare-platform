@@ -1,8 +1,9 @@
 import { useCallback, useRef } from 'react';
 import type { ChatMessage } from '../types';
 import type { AgentSSEEventMap, AgentSSEEventName } from '../types/agent-events';
+import { getApiBase } from '../lib/apiBase';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_URL = getApiBase();
 
 export type AgentStreamEvent = {
   [K in AgentSSEEventName]: { event: K; data: AgentSSEEventMap[K] };

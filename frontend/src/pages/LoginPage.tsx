@@ -5,6 +5,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useAuth } from '../contexts/AuthContext';
 import mr8Logo from '../assets/mr8-logo.png';
+import { getApiBase } from '../lib/apiBase';
 
 const loginSchema = z.object({
   email: z.string().email('Invalid email'),
@@ -38,7 +39,8 @@ export default function LoginPage() {
   };
 
   const handleGoogleLogin = () => {
-    window.location.href = 'http://localhost:5000/api/auth/google';
+    const returnTo = encodeURIComponent(window.location.origin);
+    window.location.href = `${getApiBase()}/auth/google?returnTo=${returnTo}`;
   };
 
   return (

@@ -1,22 +1,9 @@
 import { useState, useEffect } from 'react';
-import { Outlet, Link, useLocation, useOutletContext } from 'react-router-dom';
+import { Outlet, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
-import { useQueryClient } from '@tanstack/react-query';
-import CreatePostModal from './CreatePostModal';
-import PrizeModal from './PrizeModal';
-import confetti from 'canvas-confetti';
 import mr8Logo from '../assets/mr8-logo.png';
 import { formatUsd } from '../utils/formatUsd';
-import type { PrizeAward } from '../types';
-
-interface LayoutContext {
-  openCreateModal: () => void;
-}
-
-export function useLayoutContext() {
-  return useOutletContext<LayoutContext>();
-}
 
 function NavItem({ to, label, icon, collapsed }: {
   to: string;
@@ -66,23 +53,9 @@ function NavButton({ label, icon, onClick, collapsed }: {
 }
 
 export default function AppLayout() {
-  const { user, logout, refreshUser } = useAuth();
+  const { user, logout } = useAuth();
   const { dark, toggle: toggleTheme } = useTheme();
-  const queryClient = useQueryClient();
-  const [showCreateModal, setShowCreateModal] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
-  const [prize, setPrize] = useState<PrizeAward | null>(null);
-
-  const handlePrizeAwarded = (award: PrizeAward) => {
-    const colors = ['#FB7701', '#FFB800', '#FFFFFF', '#FF9A3C', '#0B8800'];
-    confetti({ particleCount: 200, spread: 110, startVelocity: 55, origin: { y: 0.55 }, colors, scalar: 1.2 });
-    setTimeout(() => {
-      confetti({ particleCount: 80, angle: 60, spread: 70, origin: { x: 0.1, y: 0.6 }, colors });
-      confetti({ particleCount: 80, angle: 120, spread: 70, origin: { x: 0.9, y: 0.6 }, colors });
-    }, 200);
-    setPrize(award);
-    refreshUser();
-  };
   const location = useLocation();
   const isChat = location.pathname === '/chat';
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('sidebar-collapsed') === 'true');
@@ -98,18 +71,13 @@ export default function AppLayout() {
     });
   };
 
-  const openCreateModal = () => {
-    setShowCreateModal(true);
-    setMobileSidebarOpen(false);
-  };
-
   const sidebarWidth = collapsed ? 'w-14' : 'w-[220px]';
 
   const sidebarContent = (
     <>
       <div className={`p-3 border-b border-edge dark:border-dark-border ${collapsed ? 'flex flex-col items-center gap-2' : ''}`}>
         <div className={`flex items-center ${collapsed ? 'justify-center' : 'justify-between'} mb-2`}>
-          <Link to="/" className="flex items-center gap-2">
+          <Link to="/landing" className="flex items-center gap-2" title="Mr8 — landing page">
             <img src={mr8Logo} alt="Mr8" width={24} height={24} className="flex-shrink-0 rounded-md" />
           </Link>
           {!collapsed && (
@@ -164,6 +132,26 @@ export default function AppLayout() {
 
       <nav className="flex-1 overflow-y-auto py-2">
         {!collapsed && <div className="section-label">Main</div>}
+        <NavButton
+          label="New chat"
+          collapsed={collapsed}
+          onClick={() => {
+            // Navigate then full-reload if already on /chat to guarantee a
+            // truly fresh session (clears messages, workspace, computer, etc.).
+            if (location.pathname === '/chat') {
+              window.location.href = '/chat';
+            } else {
+              window.location.href = '/chat';
+            }
+            setMobileSidebarOpen(false);
+          }}
+          icon={
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M12 20h9" />
+              <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+            </svg>
+          }
+        />
         <NavItem to="/" label="Feed" collapsed={collapsed}
           icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></svg>}
         />
@@ -177,10 +165,6 @@ export default function AppLayout() {
         )}
         {user && (
           <>
-            {!collapsed && <div className="section-label mt-3">Content</div>}
-            <NavButton label="Create Post" onClick={openCreateModal} collapsed={collapsed}
-              icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 5v14M5 12h14" /></svg>}
-            />
             {!collapsed && <div className="section-label mt-3">Account</div>}
             <NavItem to={`/profile/${user.id}`} label="Profile" collapsed={collapsed}
               icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>}
@@ -249,21 +233,8 @@ export default function AppLayout() {
       )}
 
       <main className="flex-1 overflow-hidden md:overflow-y-auto pt-12 md:pt-0" id="main-content">
-        <Outlet context={{ openCreateModal } satisfies LayoutContext} />
+        <Outlet />
       </main>
-
-      {prize && <PrizeModal prize={prize} onClose={() => setPrize(null)} />}
-
-      {showCreateModal && (
-        <CreatePostModal
-          onClose={() => setShowCreateModal(false)}
-          onSuccess={() => {
-            setShowCreateModal(false);
-            queryClient.invalidateQueries({ queryKey: ['posts'] });
-          }}
-          onPrizeAwarded={handlePrizeAwarded}
-        />
-      )}
     </div>
   );
 }

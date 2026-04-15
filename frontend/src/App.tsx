@@ -1,7 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
 import { ComputerProvider } from './contexts/ComputerContext';
-import { FloatingThumbnail, TakeoverHost } from './components/computer';
+import { TakeoverHost } from './components/computer';
 import AppLayout from './components/AppLayout';
 import LandingPage from './pages/LandingPage';
 import HomePage from './pages/HomePage';
@@ -78,7 +78,6 @@ function App() {
         />
         <Route path="/decks/:id/public" element={<DeckPreviewPage />} />
       </Routes>
-      <FloatingThumbnail />
       <TakeoverHost />
     </ComputerProvider>
   );

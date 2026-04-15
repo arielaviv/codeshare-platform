@@ -7,6 +7,7 @@ import SlotMachine from '../components/SlotMachine';
 import type { SpinOutcome } from '../components/SlotMachine';
 import ClaimRegisterModal from '../components/ClaimRegisterModal';
 import mr8Logo from '../assets/mr8-logo.png';
+import { formatUsd } from '../utils/formatUsd';
 
 const ANON_OUTCOMES: [SpinOutcome, SpinOutcome] = [
   { symbols: ['gold', 'gold', 'feather'], isWin: false, label: 'ANOTHER TURN' },
@@ -46,9 +47,17 @@ export default function AnonBuildPage() {
   const [files, setFiles] = useState<BuildFile[]>([]);
   const [errorMsg, setErrorMsg] = useState('');
   const [buildId, setBuildId] = useState<string | null>(null);
+  const [balanceCents, setBalanceCents] = useState(0);
+  const [chipPulse, setChipPulse] = useState(false);
   const streamStartedRef = useRef(false);
   const slotTriggeredRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
+  const buildIdRef = useRef<string | null>(null);
+  const chipRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    buildIdRef.current = buildId;
+  }, [buildId]);
 
   // If a logged-in user reaches /build, bounce them straight to /chat — they don't need
   // the anon journey; any prompt they typed carries forward through the chat flow.
@@ -137,28 +146,31 @@ export default function AnonBuildPage() {
     startStream(trimmed);
   };
 
-  const handleSlotWin = useCallback(() => {
-    if (!buildId) {
-      // Slot opened early; wait until the buildId is known before allowing claim
-      const waitForId = setInterval(() => {
-        if (buildId) {
-          clearInterval(waitForId);
-          setStage('claim');
-        }
-      }, 150);
-      // Give up after 20s — but the stream should complete well before that
-      setTimeout(() => clearInterval(waitForId), 20000);
-      return;
-    }
-    setStage('claim');
-  }, [buildId]);
+  // Fires at the slot's 'win' phase — tween the header chip in lockstep with the machine counter.
+  const handleSlotWinReveal = useCallback(() => {
+    const start = performance.now();
+    const duration = 1100;
+    const step = (now: number) => {
+      const t = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      setBalanceCents(Math.round(PRIZE_CENTS * eased));
+      if (t < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }, []);
 
-  // When buildId becomes available AFTER slot finished, move to claim automatically
-  useEffect(() => {
-    if (buildId && stage === 'slot' && slotTriggeredRef.current) {
-      // only auto-advance if the slot was already waiting (handled inside SlotMachine's onWinReveal)
-    }
-  }, [buildId, stage]);
+  // Fires after the $5 has flown into the header chip. Always advance — the
+  // claim modal handles the (common) case where the agent stream hasn't
+  // finished yet and buildId is still null.
+  const handleSlotDismiss = useCallback(() => {
+    setChipPulse(true);
+    setTimeout(() => setChipPulse(false), 600);
+    setStage('claim');
+  }, []);
+
+  const getChipRect = useCallback(() => {
+    return chipRef.current?.getBoundingClientRect() ?? null;
+  }, []);
 
   const showPromptInput = !committedPrompt && stage === 'building';
   const showStreamingUI = committedPrompt && (stage === 'building' || stage === 'slot' || stage === 'claim');
@@ -187,6 +199,21 @@ export default function AnonBuildPage() {
             </div>
           )}
         </div>
+        {committedPrompt && (
+          <div
+            ref={chipRef}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-brand-green-soft dark:bg-brand-green/15 text-brand-green text-xs font-semibold shadow-[0_2px_10px_rgba(11,136,0,0.2)]"
+            style={{
+              animation: chipPulse ? 'mr8-chip-pulse 0.5s ease-out' : undefined,
+            }}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+              <circle cx="12" cy="12" r="10" opacity="0.2" />
+              <path d="M12 7v10M9 10l3-3 3 3M9 14l3 3 3-3" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            {formatUsd(balanceCents)}
+          </div>
+        )}
         {stage === 'building' && (
           <div className="flex items-center gap-2 text-[11px] text-brand-orange font-semibold">
             <span className="w-1.5 h-1.5 rounded-full bg-brand-orange animate-pulse" />
@@ -321,18 +348,25 @@ export default function AnonBuildPage() {
             <SlotMachine
               outcomes={ANON_OUTCOMES}
               awardedCents={PRIZE_CENTS}
-              onWinReveal={handleSlotWin}
+              onWinReveal={handleSlotWinReveal}
+              onDismiss={handleSlotDismiss}
+              flyoutTarget={getChipRect}
             />
           </div>
         </div>
       )}
 
-      {stage === 'claim' && buildId && (
+      {stage === 'claim' && (
         <ClaimRegisterModal buildId={buildId} prompt={committedPrompt} prizeCents={PRIZE_CENTS} />
       )}
 
       <style>{`
         @keyframes mr8-slot-overlay { 0% { opacity: 0 } 100% { opacity: 1 } }
+        @keyframes mr8-chip-pulse {
+          0% { transform: scale(1); box-shadow: 0 2px 10px rgba(11,136,0,0.2); }
+          40% { transform: scale(1.35); box-shadow: 0 6px 24px rgba(11,136,0,0.6); }
+          100% { transform: scale(1); box-shadow: 0 2px 10px rgba(11,136,0,0.2); }
+        }
       `}</style>
     </div>
   );

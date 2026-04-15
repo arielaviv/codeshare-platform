@@ -166,7 +166,10 @@ export default function WelcomeSpinPage() {
 
   const handleWinReveal = () => {
     if (!reducedMotion) fireWinConfetti();
-    setTimeout(() => setStage('price-drop'), 1200);
+  };
+
+  const handleSlotDismiss = () => {
+    setStage('price-drop');
   };
 
   const handleClaim = async () => {
@@ -223,6 +226,7 @@ export default function WelcomeSpinPage() {
               awardedCents={amountAwarded > 0 ? amountAwarded : 500}
               reduced={reducedMotion}
               onWinReveal={handleWinReveal}
+              onDismiss={handleSlotDismiss}
             />
           </div>
         )}

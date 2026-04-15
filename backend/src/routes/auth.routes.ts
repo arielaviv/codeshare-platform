@@ -292,18 +292,85 @@ router.get('/me', authenticate, async (req: Request, res: Response) => {
  *       302:
  *         description: Redirect to Google
  */
-router.get('/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
+/**
+ * Build the allowlist of frontend origins this server will redirect to after
+ * Google OAuth. Pulls from `FRONTEND_URLS` (comma-separated), falls back to
+ * `FRONTEND_URL`, and always permits any `http://localhost:<port>` in dev so
+ * the Vite auto-port-bump (5173 → 5174 → …) doesn't break the round-trip.
+ */
+function getReturnToAllowlist(): string[] {
+  const list = (process.env.FRONTEND_URLS ?? process.env.FRONTEND_URL ?? '')
+    .split(',')
+    .map((s) => s.trim().replace(/\/+$/, ''))
+    .filter(Boolean);
+  if (list.length === 0) list.push('http://localhost:5173');
+  return list;
+}
+
+function isLocalhostOrigin(origin: string): boolean {
+  try {
+    const u = new URL(origin);
+    return (
+      (u.protocol === 'http:' || u.protocol === 'https:') &&
+      (u.hostname === 'localhost' || u.hostname === '127.0.0.1')
+    );
+  } catch {
+    return false;
+  }
+}
+
+function resolveReturnTo(raw: string | undefined): string {
+  const fallback = getReturnToAllowlist()[0];
+  if (!raw) return fallback;
+  let candidate: string;
+  try {
+    candidate = decodeURIComponent(raw).replace(/\/+$/, '');
+  } catch {
+    return fallback;
+  }
+  // Only accept a bare origin (scheme://host[:port]); reject paths/queries to
+  // prevent open-redirect to attacker-controlled URLs.
+  let originOnly: string;
+  try {
+    const u = new URL(candidate);
+    originOnly = `${u.protocol}//${u.host}`;
+  } catch {
+    return fallback;
+  }
+  const allowlist = getReturnToAllowlist();
+  if (allowlist.includes(originOnly)) return originOnly;
+  if (isLocalhostOrigin(originOnly)) return originOnly;
+  return fallback;
+}
 
 /**
  * @swagger
- * /api/auth/google/callback:
+ * /api/auth/google:
  *   get:
- *     summary: Google OAuth callback
+ *     summary: Initiate Google OAuth
  *     tags: [Auth]
+ *     parameters:
+ *       - in: query
+ *         name: returnTo
+ *         schema:
+ *           type: string
+ *         description: Frontend origin to redirect to after Google callback.
+ *           Must be in FRONTEND_URLS allowlist (or any localhost in dev).
  *     responses:
  *       302:
- *         description: Redirect to frontend with tokens
+ *         description: Redirect to Google
  */
+router.get('/google', (req, res, next) => {
+  const returnTo = resolveReturnTo(req.query.returnTo as string | undefined);
+  // Stash the validated origin in the OAuth `state` param. Google echoes it
+  // back at callback time. Base64-url so it survives URL transit.
+  const state = Buffer.from(returnTo, 'utf8').toString('base64url');
+  passport.authenticate('google', {
+    scope: ['profile', 'email'],
+    state,
+  } as never)(req, res, next);
+});
+
 router.get(
   '/google/callback',
   passport.authenticate('google', { session: false, failureRedirect: '/login' }),
@@ -314,8 +381,21 @@ router.get(
     user.refreshToken = tokens.refreshToken;
     await user.save();
 
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
-    res.redirect(`${frontendUrl}/auth/callback?token=${tokens.accessToken}&refresh=${tokens.refreshToken}`);
+    let returnTo = getReturnToAllowlist()[0];
+    const stateRaw = req.query.state as string | undefined;
+    if (stateRaw) {
+      try {
+        const decoded = Buffer.from(stateRaw, 'base64url').toString('utf8');
+        // Re-validate on the way out — never trust a round-tripped value blindly.
+        returnTo = resolveReturnTo(encodeURIComponent(decoded));
+      } catch {
+        // fall back to the allowlist default
+      }
+    }
+
+    res.redirect(
+      `${returnTo}/auth/callback?token=${tokens.accessToken}&refresh=${tokens.refreshToken}`
+    );
   }
 );
 

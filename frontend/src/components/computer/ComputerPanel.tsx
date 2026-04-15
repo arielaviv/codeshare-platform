@@ -1,4 +1,3 @@
-import { useEffect } from 'react';
 import { useComputer } from '../../contexts/ComputerContext';
 import { BrowserView } from './BrowserView';
 import { EditorView } from './EditorView';
@@ -7,28 +6,17 @@ import { TimelineScrubber } from './TimelineScrubber';
 import { COLORS, KEYFRAMES } from './colors';
 
 export function ComputerPanel(): JSX.Element | null {
-  const { state, setMode, activeEntry } = useComputer();
-  const { panel } = state;
-
-  useEffect(() => {
-    if (panel.mode !== 'expanded') return;
-    const handler = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') {
-        setMode('compact');
-      }
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [panel.mode, setMode]);
-
-  if (panel.mode !== 'expanded') return null;
+  // Visibility is now driven by the parent (AIChatPage's artifact panel +
+  // rightTab === 'computer'). This component just renders content; it no longer
+  // self-gates on `panel.mode`.
+  const { activeEntry } = useComputer();
 
   return (
     <>
       <style>{KEYFRAMES}</style>
       <div
         role="dialog"
-        aria-label="Mr8 Computer"
+        aria-label="Mr8's Computer"
         style={{
           display: 'flex',
           flexDirection: 'column',
@@ -82,7 +70,7 @@ function Header(): JSX.Element {
             textTransform: 'uppercase',
           }}
         >
-          Mr8 Computer
+          Mr8's Computer
         </span>
       </div>
       <div style={{ display: 'flex', gap: 4 }}>

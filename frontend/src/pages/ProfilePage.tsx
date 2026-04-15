@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import api from '../services/api';
 import PostCard from '../components/PostCard';
 import { Post } from '../types';
+import { getStaticBase } from '../lib/apiBase';
 
 export default function ProfilePage() {
   const { id } = useParams<{ id: string }>();
@@ -67,7 +68,7 @@ export default function ProfilePage() {
         <div className="flex items-center gap-4">
           {profile?.profileImage ? (
             <img
-              src={`http://localhost:5000${profile.profileImage}`}
+              src={`${getStaticBase()}${profile.profileImage}`}
               alt={profile.username}
               className="w-16 h-16 rounded-full object-cover flex-shrink-0"
             />

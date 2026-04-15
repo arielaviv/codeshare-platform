@@ -79,7 +79,7 @@ function TreeNodeRow({ node, depth, activeFile, onSelect, onDelete, recentFiles,
     return (
       <>
         <div
-          className="flex items-center gap-1 px-2 py-1 cursor-pointer text-xs text-[#A0A0A0] hover:bg-[#1A1A1A] hover:text-[#E8E8E8] transition-colors"
+          className="flex items-center gap-1 px-2 py-1 cursor-pointer text-xs text-ink-secondary dark:text-[#A0A0A0] hover:bg-surface-tertiary dark:hover:bg-[#1A1A1A] hover:text-ink dark:hover:text-[#E8E8E8] transition-colors"
           style={{ paddingLeft: `${depth * 12 + 8}px` }}
           onClick={() => toggleExpand(node.path)}
         >
@@ -87,7 +87,7 @@ function TreeNodeRow({ node, depth, activeFile, onSelect, onDelete, recentFiles,
             className={`transition-transform flex-shrink-0 ${isOpen ? 'rotate-90' : ''}`}>
             <polyline points="9 18 15 12 9 6" />
           </svg>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="flex-shrink-0 text-[#666]">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="flex-shrink-0 text-ink-tertiary dark:text-[#666]">
             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
           </svg>
           <span className="truncate">{node.name}</span>
@@ -117,10 +117,10 @@ function TreeNodeRow({ node, depth, activeFile, onSelect, onDelete, recentFiles,
     <div
       className={`group flex items-center gap-1.5 px-2 py-1 cursor-pointer text-xs transition-colors ${
         isActive
-          ? 'bg-[#1E3A5F] text-[#60A5FA] font-medium'
+          ? 'bg-brand-orange-soft text-brand-orange dark:bg-[#1E3A5F] dark:text-[#60A5FA] font-medium'
           : isRecent
-            ? 'bg-[#1A2A1A] text-[#A0A0A0] animate-flash'
-            : 'text-[#A0A0A0] hover:bg-[#1A1A1A] hover:text-[#E8E8E8]'
+            ? 'bg-brand-green-soft text-ink-secondary dark:bg-[#1A2A1A] dark:text-[#A0A0A0] animate-flash'
+            : 'text-ink-secondary dark:text-[#A0A0A0] hover:bg-surface-tertiary dark:hover:bg-[#1A1A1A] hover:text-ink dark:hover:text-[#E8E8E8]'
       }`}
       style={{ paddingLeft: `${depth * 12 + 22}px` }}
       onClick={() => onSelect(node.path)}
