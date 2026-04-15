@@ -243,6 +243,7 @@ export async function runCodeAgent(
   writer: SSEWriter,
   model?: string,
   userId?: mongoose.Types.ObjectId,
+  options?: { chatOnly?: boolean },
 ): Promise<void> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
@@ -282,11 +283,17 @@ export async function runCodeAgent(
   while (iterations < MAX_ITERATIONS) {
     iterations++;
 
+    // Chat mode: no tools, smaller system prompt, Haiku-only.
+    const isChatOnly = options?.chatOnly === true;
+    const chatSystemPrompt =
+      'You are Mr8, a helpful AI assistant. Reply concisely. Use plain prose with light markdown. No emojis. No exclamation points for emphasis.';
     const response = await client.messages.create({
-      model: (model && ALLOWED_MODELS.includes(model)) ? model : 'claude-haiku-4-5-20251001',
+      model: isChatOnly
+        ? 'claude-haiku-4-5-20251001'
+        : (model && ALLOWED_MODELS.includes(model)) ? model : 'claude-haiku-4-5-20251001',
       max_tokens: 8192,
-      system: buildSystemPrompt(workspace, soulSnippet),
-      tools: allToolDefinitions,
+      system: isChatOnly ? chatSystemPrompt : buildSystemPrompt(workspace, soulSnippet),
+      ...(isChatOnly ? {} : { tools: allToolDefinitions }),
       messages: apiMessages,
     });
 

@@ -225,8 +225,8 @@ router.post(
         },
       };
 
-      const { model } = req.body as { model?: string };
-      await runCodeAgent(messages, workspace || {}, writer, model, req.user!._id);
+      const { model, chatOnly } = req.body as { model?: string; chatOnly?: boolean };
+      await runCodeAgent(messages, workspace || {}, writer, model, req.user!._id, { chatOnly });
     } catch (error) {
       if (!res.headersSent) {
         if (error instanceof ApiError) {

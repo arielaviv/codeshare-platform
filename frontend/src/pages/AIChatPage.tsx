@@ -759,6 +759,65 @@ export default function AIChatPage() {
     }, selectedModel);
   }, [loading, messages, workspace, projectName, selectedModel]);
 
+  /**
+   * Chat mode (9G) — Q&A without tools. Reuses the agent stream but with
+   * `chatOnly: true` so the backend strips tools and uses a minimal system
+   * prompt. No goals, no task list, no artifact panel.
+   */
+  const runChatOnlyFlow = useCallback((trimmed: string) => {
+    setInput('');
+    setLoading(true);
+
+    const userMsg: ChatItem = { id: `user-${Date.now()}`, kind: 'user', content: trimmed };
+    setMessages((prev) => [...prev, userMsg]);
+
+    let currentAssistantTextId: string | null = null;
+    const allMsgs = [...messages, userMsg];
+    const history: ChatMessage[] = toApiHistory(allMsgs);
+
+    abortRef.current = streamAgent(
+      history,
+      {},
+      {
+        onTextDelta(content) {
+          if (currentAssistantTextId === null) {
+            const id = `asst-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+            currentAssistantTextId = id;
+            setMessages((prev) => [...prev, { id, kind: 'assistant-text', content }]);
+          } else {
+            const id = currentAssistantTextId;
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === id && m.kind === 'assistant-text'
+                  ? { ...m, content: m.content + content }
+                  : m
+              )
+            );
+          }
+        },
+        onFileWrite() { /* no-op in chat mode */ },
+        onFileDelete() { /* no-op */ },
+        onToolCall() { /* no-op — tools are disabled */ },
+        onToolResult() { /* no-op */ },
+        onError(message) {
+          setMessages((prev) => {
+            if (currentAssistantTextId !== null) return prev;
+            return [
+              ...prev,
+              { id: `asst-err-${Date.now()}`, kind: 'assistant-text', content: message },
+            ];
+          });
+        },
+        onDone() {
+          setLoading(false);
+          abortRef.current = null;
+        },
+      },
+      'claude-haiku-4-5-20251001',
+      { chatOnly: true },
+    );
+  }, [messages]);
+
   const acceptPlanAndBuild = useCallback(
     (mode: PermissionMode, clearContext: boolean) => {
       if (!activePlan) return;
@@ -1250,6 +1309,10 @@ export default function AIChatPage() {
     }
     if (forceMode === 'sheet') {
       await runSpreadsheetFlow(trimmed);
+      return;
+    }
+    if (forceMode === 'chat') {
+      runChatOnlyFlow(trimmed);
       return;
     }
 

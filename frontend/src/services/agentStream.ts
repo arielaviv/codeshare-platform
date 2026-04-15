@@ -8,6 +8,7 @@ export function streamAgent(
   workspace: Record<string, string>,
   handlers: AgentSSEHandlers,
   model?: string,
+  options?: { chatOnly?: boolean },
 ): AbortController {
   const controller = new AbortController();
 
@@ -22,7 +23,7 @@ export function streamAgent(
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ messages, workspace, ...(model ? { model } : {}) }),
+        body: JSON.stringify({ messages, workspace, ...(model ? { model } : {}), ...(options?.chatOnly ? { chatOnly: true } : {}) }),
         signal: controller.signal,
       });
     } catch (err) {
