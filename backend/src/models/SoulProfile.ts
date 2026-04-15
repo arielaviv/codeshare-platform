@@ -18,6 +18,11 @@ export interface ISoulProfile extends Document {
   conversionTriggers: string[];
   aversions: string[];
   archetype: SoulArchetype;
+  // --- Phase 6 Personalization fields (user-editable) ---
+  nickname?: string;
+  occupation?: string;
+  aboutYou?: string;
+  customInstructions?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -98,6 +103,10 @@ const soulProfileSchema = new Schema<ISoulProfile>(
       enum: archetypes,
       default: 'unknown',
     },
+    nickname: { type: String, maxlength: 60 },
+    occupation: { type: String, maxlength: 80 },
+    aboutYou: { type: String, maxlength: 2000 },
+    customInstructions: { type: String, maxlength: 3000 },
   },
   { timestamps: true }
 );

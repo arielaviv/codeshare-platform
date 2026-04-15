@@ -7,6 +7,7 @@ import TopUpModal from './TopUpModal';
 import mr8Logo from '../assets/mr8-logo.png';
 import { formatUsd } from '../utils/formatUsd';
 import RecentSessionsPopover from './sidebar/RecentSessionsPopover';
+import PersonalizationModal from './personalization/PersonalizationModal';
 
 function NavItem({ to, label, icon, collapsed }: {
   to: string;
@@ -60,6 +61,7 @@ export default function AppLayout() {
   const { dark, toggle: toggleTheme } = useTheme();
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [showTopUpModal, setShowTopUpModal] = useState(false);
+  const [showPersonalization, setShowPersonalization] = useState(false);
   const location = useLocation();
   const isChat = location.pathname === '/chat';
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('sidebar-collapsed') === 'true');
@@ -178,6 +180,17 @@ export default function AppLayout() {
             <NavItem to={`/profile/${user.id}`} label="Profile" collapsed={collapsed}
               icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>}
             />
+            <NavButton
+              label="Personalization"
+              collapsed={collapsed}
+              onClick={() => setShowPersonalization(true)}
+              icon={
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" />
+                  <rect x="3" y="14" width="7" height="7" /><rect x="14" y="14" width="7" height="7" />
+                </svg>
+              }
+            />
           </>
         )}
       </nav>
@@ -247,6 +260,10 @@ export default function AppLayout() {
 
       {showTopUpModal && (
         <TopUpModal onClose={() => setShowTopUpModal(false)} />
+      )}
+
+      {showPersonalization && (
+        <PersonalizationModal onClose={() => setShowPersonalization(false)} />
       )}
     </div>
   );
