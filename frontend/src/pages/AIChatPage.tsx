@@ -8,7 +8,10 @@ import { streamAgent } from '../services/agentStream';
 import { requestResearch } from '../services/researchStream';
 import { streamDeckGeneration } from '../services/deckStream';
 import PrizeModal from '../components/PrizeModal';
+import { PlanApprovalWidget } from '../components/PlanApprovalWidget';
 import type { PrizeAward } from '../types';
+import type { PlanProposedEvent, DeliveryStatusEvent } from '../types/agent-events';
+import type { PermissionMode } from '../types/blueprint';
 import { useAuth } from '../contexts/AuthContext';
 import { useComputer } from '../contexts/ComputerContext';
 import { useComputerStream } from '../hooks/useComputerStream';
@@ -156,6 +159,9 @@ export default function AIChatPage() {
   const [showSettings, setShowSettings] = useState(false);
   const [forceMode, setForceMode] = useState<'auto' | 'code' | 'deck'>('auto');
   const [prize, setPrize] = useState<PrizeAward | null>(null);
+  const [activePlan, setActivePlan] = useState<PlanProposedEvent | null>(null);
+  const [deliveryStatus, setDeliveryStatus] = useState<DeliveryStatusEvent['status'] | null>(null);
+  const [acceptingDelivery, setAcceptingDelivery] = useState(false);
   const { refreshUser } = useAuth();
   const computerCtx = useComputer();
   const { start: startComputer } = useComputerStream();
@@ -377,6 +383,13 @@ export default function AIChatPage() {
         setPrize(award);
         refreshUser();
       },
+      onPlanProposed(event) {
+        setActivePlan(event);
+        setDeliveryStatus('scoped');
+      },
+      onDeliveryStatus(event) {
+        setDeliveryStatus(event.status);
+      },
       onError(message) {
         // If no text yet this turn, surface the error as an assistant-text item.
         setMessages((prev) => {
@@ -421,6 +434,49 @@ export default function AIChatPage() {
       },
     }, selectedModel);
   }, [loading, messages, workspace, projectName, selectedModel]);
+
+  const acceptPlanAndBuild = useCallback(
+    (mode: PermissionMode, clearContext: boolean) => {
+      if (!activePlan) return;
+      const { planId, pricing } = activePlan;
+      const acceptanceText = `Accept the plan. id=${planId} dealerCents=${pricing.dealerCents} mode=${mode} clearContext=${clearContext}`;
+      setActivePlan(null);
+      setDeliveryStatus(null);
+      runCodeFlow(acceptanceText);
+    },
+    [activePlan, runCodeFlow],
+  );
+
+  const acceptDelivery = useCallback(async () => {
+    if (!activePlan || acceptingDelivery) return;
+    setAcceptingDelivery(true);
+    try {
+      const { data } = await api.post<{ ok: boolean; newBalanceCents: number; priceCents: number }>(
+        '/ai/accept-delivery',
+        { planId: activePlan.planId, priceCents: activePlan.pricing.dealerCents },
+      );
+      if (data.ok) {
+        setDeliveryStatus('delivered');
+        setActivePlan(null);
+        refreshUser();
+      }
+    } catch (err) {
+      console.error('accept-delivery failed', err);
+    } finally {
+      setAcceptingDelivery(false);
+    }
+  }, [activePlan, acceptingDelivery, refreshUser]);
+
+  const onSpinForDiscount = useCallback(() => {
+    // W3 prize orchestrator will handle this. For now, just log.
+    console.info('[plan-spine] spin-for-discount requested — awaiting W3 orchestrator');
+  }, []);
+
+  const onTellMr8 = useCallback(() => {
+    setActivePlan(null);
+    setDeliveryStatus(null);
+    textareaRef.current?.focus();
+  }, []);
 
   const runComputerFlow = useCallback((trimmed: string) => {
     const userMsg: ChatItem = { id: `user-${Date.now()}`, kind: 'user', content: trimmed };
@@ -938,6 +994,51 @@ export default function AIChatPage() {
               </div>
             )}
           </div>
+
+          {/* Plan approval widget — shows above the input when Mr8 has proposed
+              a plan but the user hasn't accepted yet. (Phase 3 will move this
+              into the chat transcript as a `plan-approval` ChatItem.) */}
+          {activePlan && deliveryStatus === 'scoped' && (
+            <div
+              className={`px-4 pb-2 flex-shrink-0 ${
+                artifactOpen ? '' : 'mx-auto w-full max-w-4xl'
+              }`}
+            >
+              <PlanApprovalWidget
+                plan={activePlan.plan}
+                pricing={activePlan.pricing}
+                onAcceptBuild={acceptPlanAndBuild}
+                onSpinForDiscount={onSpinForDiscount}
+                onTellMr8={onTellMr8}
+              />
+            </div>
+          )}
+
+          {/* Delivery verified — accept & merge debits the wallet. */}
+          {deliveryStatus === 'verified' && activePlan && (
+            <div
+              className={`px-4 pb-2 flex-shrink-0 ${
+                artifactOpen ? '' : 'mx-auto w-full max-w-4xl'
+              }`}
+            >
+              <div className="flex items-center justify-between rounded-md border border-brand-green/40 bg-brand-green-soft dark:bg-emerald-950/40 px-3 py-2 text-[11px]">
+                <div className="text-brand-green dark:text-emerald-200">
+                  Build verified. Accept & Merge to finalize —{' '}
+                  <span className="font-semibold">
+                    ${(activePlan.pricing.dealerCents / 100).toFixed(2)}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={acceptDelivery}
+                  disabled={acceptingDelivery}
+                  className="rounded bg-brand-green px-3 py-1 font-semibold text-white hover:bg-brand-green-hover disabled:opacity-60"
+                >
+                  {acceptingDelivery ? 'Debiting…' : 'Accept & Merge'}
+                </button>
+              </div>
+            </div>
+          )}
 
           <div
             className={`p-4 flex-shrink-0 space-y-2.5 ${

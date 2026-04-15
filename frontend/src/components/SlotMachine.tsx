@@ -65,7 +65,8 @@ const PULL_MAX_PX = 80;
 const PULL_TRIGGER_PX = 38;
 
 interface Props {
-  outcomes: [SpinOutcome, SpinOutcome];
+  outcomes?: [SpinOutcome, SpinOutcome];
+  overrideOutcomes?: [SpinOutcome, SpinOutcome];
   awardedCents: number;
   reduced?: boolean;
   onWinReveal: () => void;
@@ -85,12 +86,16 @@ type Phase =
 
 export default function SlotMachine({
   outcomes,
+  overrideOutcomes,
   awardedCents,
   reduced,
   onWinReveal,
   onDismiss,
   flyoutTarget,
 }: Props) {
+  // Caller may pass either `outcomes` directly or `overrideOutcomes` (used by
+  // the Phase 5 prize orchestrator to inject SOUL-weighted reels at runtime).
+  const effectiveOutcomes = overrideOutcomes ?? outcomes;
   const [phase, setPhase] = useState<Phase>('idle1');
   const [counter, setCounter] = useState(0);
   const [flyoutTransform, setFlyoutTransform] = useState<string>('');
@@ -148,10 +153,11 @@ export default function SlotMachine({
   // Phase effects — each schedules only its own timers.
   useEffect(() => {
     if (phase !== 'spin1') return;
-    requestAnimationFrame(() => applySpin(outcomes[0].symbols));
+    if (!effectiveOutcomes) return;
+    requestAnimationFrame(() => applySpin(effectiveOutcomes[0].symbols));
     const t = setTimeout(() => setPhase('near-miss'), REEL_STOP_MS[2] + 150);
     return () => clearTimeout(t);
-  }, [phase, outcomes]);
+  }, [phase, effectiveOutcomes]);
 
   useEffect(() => {
     if (phase !== 'near-miss') return;
@@ -161,13 +167,14 @@ export default function SlotMachine({
 
   useEffect(() => {
     if (phase !== 'spin2') return;
+    if (!effectiveOutcomes) return;
     resetReels();
     requestAnimationFrame(() =>
-      requestAnimationFrame(() => applySpin(outcomes[1].symbols))
+      requestAnimationFrame(() => applySpin(effectiveOutcomes[1].symbols))
     );
     const t = setTimeout(() => setPhase('win'), REEL_STOP_MS[2] + WIN_TAIL_MS);
     return () => clearTimeout(t);
-  }, [phase, outcomes]);
+  }, [phase, effectiveOutcomes]);
 
   useEffect(() => {
     if (phase !== 'win') return;

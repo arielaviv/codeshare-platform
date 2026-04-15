@@ -101,6 +101,21 @@ export function streamAgent(
                   reason: parsed.reason || '',
                 });
                 break;
+              case 'plan_proposed':
+                handlers.onPlanProposed?.({
+                  planId: parsed.planId,
+                  plan: parsed.plan,
+                  pricing: parsed.pricing,
+                });
+                break;
+              case 'delivery_status':
+                handlers.onDeliveryStatus?.({
+                  planId: parsed.planId || '',
+                  status: parsed.status,
+                  attempt: parsed.attempt ?? 1,
+                  reason: parsed.reason,
+                });
+                break;
               case 'error':
                 handlers.onError(parsed.message || 'Unknown error');
                 break;

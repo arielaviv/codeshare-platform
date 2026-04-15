@@ -4,17 +4,20 @@ import mongoose from 'mongoose';
 import type { ChatMessage } from '../types/chat';
 import type { SSEWriter } from './code-agent.types';
 import { allToolDefinitions, executeTool, type ToolContext } from './tools';
+import { readProfile, buildSystemPromptSnippet } from './soul.service';
 
 export type { SSEWriter } from './code-agent.types';
 
 const MAX_ITERATIONS = 25;
 
-function buildSystemPrompt(workspace: Map<string, string>): string {
+function buildSystemPrompt(workspace: Map<string, string>, soulSnippet?: string): string {
   const fileList = workspace.size > 0
     ? Array.from(workspace.keys()).join('\n')
     : '(empty)';
 
-  return `You are Mr8, an expert AI assistant and exceptional senior software developer. You generate complete, production-ready web applications that run in a WebContainer browser environment.
+  const soulBlock = soulSnippet ? `\n${soulSnippet}\n` : '';
+
+  return `You are Mr8, an expert AI assistant and exceptional senior software developer. You generate complete, production-ready web applications that run in a WebContainer browser environment.${soulBlock}
 
 You think HOLISTICALLY before creating anything. Consider the full project scope, all files needed, and how components interact before writing code.
 
@@ -25,6 +28,28 @@ VOICE & FORMATTING (strict):
 - Markdown is allowed (headings, lists, **bold**, \`code\`) but keep it sparse. Prefer plain prose.
 - Section dividers and decorative ASCII art are forbidden.
 - Generated UI code may use icon libraries (lucide-react) but must NOT embed unicode emoji characters in JSX text.
+
+AGENTIC PRICING (critical — affects when you build):
+Mr8 quotes every non-trivial build as a priced plan first, then builds once the user accepts.
+
+When the user makes a NEW build request that is non-trivial (more than one file, or a coherent feature with state/logic), your FIRST action MUST be to call the propose_plan tool with the effective user prompt. After calling propose_plan, respond with ONE short sentence acknowledging the plan and STOP — do NOT write any files yet.
+
+Non-trivial examples (propose a plan first):
+- "Build a todo app"
+- "Add login with Google"
+- "Make a portfolio with 3 pages"
+- "Add a search feature"
+
+Trivial examples (skip the plan, just do it):
+- "Change the button color to red" (no new logic, one file)
+- "Fix the typo on line 42"
+- "What does this code do?" (explanation only, no build)
+
+After proposing a plan, the user will reply with ONE of:
+- "Accept the plan. mode=auto ..." or similar → build immediately using write_file tools.
+- Plain feedback text → revise the plan by calling propose_plan again.
+
+Once you are in build mode (user accepted a plan), proceed with the regular file-creation flow below. Do NOT call propose_plan mid-build.
 
 TECH STACK: React + Vite + TypeScript + Tailwind CSS
 
@@ -192,6 +217,16 @@ export async function runCodeAgent(
     filesModified,
   };
 
+  let soulSnippet: string | undefined;
+  if (userId) {
+    try {
+      const profile = await readProfile(userId);
+      soulSnippet = buildSystemPromptSnippet(profile);
+    } catch {
+      // Profile read is best-effort; agent continues without personalization.
+    }
+  }
+
   const apiMessages: MessageParam[] = messages.map((m) => ({
     role: m.role,
     content: m.content,
@@ -205,7 +240,7 @@ export async function runCodeAgent(
     const response = await client.messages.create({
       model: (model && ALLOWED_MODELS.includes(model)) ? model : 'claude-haiku-4-5-20251001',
       max_tokens: 8192,
-      system: buildSystemPrompt(workspace),
+      system: buildSystemPrompt(workspace, soulSnippet),
       tools: allToolDefinitions,
       messages: apiMessages,
     });
@@ -252,6 +287,14 @@ export async function runCodeAgent(
 
     apiMessages.push({ role: 'assistant', content: response.content });
     apiMessages.push({ role: 'user', content: toolResults });
+  }
+
+  if (filesModified.size > 0) {
+    writer.send('delivery_status', {
+      planId: '',
+      status: 'verified',
+      attempt: 1,
+    });
   }
 
   writer.send('done', { filesModified: Array.from(filesModified) });

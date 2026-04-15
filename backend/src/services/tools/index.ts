@@ -5,6 +5,7 @@ import { readFileTool } from './read-file.tool';
 import { listFilesTool } from './list-files.tool';
 import { deleteFileTool } from './delete-file.tool';
 import { awardPrizeTool } from './award-prize.tool';
+import { proposePlanTool } from './propose-plan.tool';
 import {
   platformToolDefinitions,
   executePlatformTool,
@@ -17,6 +18,7 @@ const builtinTools: AgentTool[] = [
   listFilesTool,
   deleteFileTool,
   awardPrizeTool,
+  proposePlanTool,
 ];
 
 const builtinByName: Map<string, AgentTool> = new Map(

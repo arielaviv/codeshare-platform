@@ -188,6 +188,18 @@ export const classifyIntentSchema = z.object({
     .max(2000, 'Prompt cannot exceed 2000 characters'),
 });
 
+export const acceptDeliverySchema = z.object({
+  planId: z
+    .string()
+    .min(1, 'planId is required')
+    .max(100, 'planId cannot exceed 100 characters'),
+  priceCents: z
+    .number()
+    .int()
+    .min(0, 'priceCents cannot be negative')
+    .max(100000, 'priceCents cannot exceed $1000'),
+});
+
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
 export type UpdateUserInput = z.infer<typeof updateUserSchema>;
@@ -198,3 +210,4 @@ export type CreateDeckInput = z.infer<typeof createDeckSchema>;
 export type UpdateDeckInput = z.infer<typeof updateDeckSchema>;
 export type GenerateDeckInput = z.infer<typeof generateDeckSchema>;
 export type ClassifyIntentInput = z.infer<typeof classifyIntentSchema>;
+export type AcceptDeliveryInput = z.infer<typeof acceptDeliverySchema>;
