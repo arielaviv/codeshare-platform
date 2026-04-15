@@ -21,6 +21,7 @@ import soulRoutes from './routes/soul.routes';
 import walletRoutes from './routes/wallet.routes';
 import sessionsRoutes from './routes/sessions.routes';
 import usageRoutes from './routes/usage.routes';
+import spreadsheetRoutes from './routes/spreadsheet.routes';
 
 dotenv.config({ path: path.join(__dirname, '../.env') });
 
@@ -80,6 +81,7 @@ app.use('/api/soul', soulRoutes);
 app.use('/api/wallet', walletRoutes);
 app.use('/api/sessions', sessionsRoutes);
 app.use('/api/usage', usageRoutes);
+app.use('/api/spreadsheets', spreadsheetRoutes);
 
 // Error handling middleware
 app.use(errorHandler);

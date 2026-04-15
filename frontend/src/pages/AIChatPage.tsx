@@ -26,6 +26,8 @@ import ComputerActivityCard from '../components/chat/ComputerActivityCard';
 import GoalCard, { type GoalAction } from '../components/chat/GoalCard';
 import TaskCompletedCard from '../components/chat/TaskCompletedCard';
 import FollowUpsCard, { type FollowUpSuggestion } from '../components/chat/FollowUpsCard';
+import SpreadsheetViewer, { type SheetData } from '../components/spreadsheet/SpreadsheetViewer';
+import { streamSpreadsheetGeneration } from '../services/spreadsheetStream';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { wcManager } from '../lib/webcontainer-manager';
 import SettingsModal from '../components/SettingsModal';
@@ -209,7 +211,13 @@ export default function AIChatPage() {
   const [projectName, setProjectName] = useState('');
   const [selectedModel, setSelectedModel] = useState('claude-haiku-4-5-20251001');
   const [editingName, setEditingName] = useState(false);
-  const [rightTab, setRightTab] = useState<'code' | 'preview' | 'computer'>('preview');
+  const [rightTab, setRightTab] = useState<'code' | 'preview' | 'computer' | 'sheet'>('preview');
+  // Active spreadsheet artifact (Phase 4G). Streams in row-by-row.
+  const [activeSheets, setActiveSheets] = useState<SheetData[]>([]);
+  const [activeSheetTitle, setActiveSheetTitle] = useState<string>('');
+  const [sheetStreaming, setSheetStreaming] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [_activeSpreadsheetId, setActiveSpreadsheetId] = useState<string | null>(null);
   // The artifact panel (right side) is auto-revealed on first artifact event
   // (file_write or browser/python tool_call). The user can dismiss it with the
   // X button; dismissal is reset on the next user message so a new turn can
@@ -1030,6 +1038,102 @@ export default function AIChatPage() {
     );
   }, [navigate, refreshUser]);
 
+  /**
+   * Spreadsheet skill flow. Streams sheets row-by-row into the artifact
+   * panel, pushes inline assistant messaging + a task list.
+   */
+  const runSpreadsheetFlow = useCallback(async (trimmed: string) => {
+    setInput('');
+    setLoading(true);
+    setActiveSheets([]);
+    setActiveSheetTitle('');
+    setSheetStreaming(true);
+    setPanelDismissed(false);
+    setRightTab('sheet');
+
+    const userMsg: ChatItem = { id: `user-${Date.now()}`, kind: 'user', content: trimmed };
+    const intro: ChatItem = {
+      id: `asst-${Date.now() + 1}`,
+      kind: 'assistant-text',
+      content: `I'll build your spreadsheet.`,
+    };
+    const taskListId = `tasks-${Date.now()}`;
+    const taskList: ChatItem = {
+      id: taskListId,
+      kind: 'task-list',
+      title: trimmed.length > 60 ? `${trimmed.slice(0, 57)}…` : trimmed,
+      tasks: [
+        { id: 'task-gen', label: 'Generate sheet structure', status: 'running' },
+        { id: 'task-rows', label: 'Stream rows into the viewer', status: 'pending' },
+        { id: 'task-save', label: 'Save spreadsheet', status: 'pending' },
+      ],
+      status: 'running',
+    };
+    setMessages((prev) => [...prev, userMsg, intro, taskList]);
+
+    const setTask = (taskId: string, status: TaskListTask['status']) => {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === taskListId && m.kind === 'task-list'
+            ? { ...m, tasks: m.tasks.map((t) => (t.id === taskId ? { ...t, status } : t)) }
+            : m
+        )
+      );
+    };
+    const setOverall = (status: 'running' | 'done' | 'error') => {
+      setMessages((prev) =>
+        prev.map((m) => (m.id === taskListId && m.kind === 'task-list' ? { ...m, status } : m))
+      );
+    };
+
+    abortRef.current = streamSpreadsheetGeneration(
+      { topic: trimmed, sessionId: serverSessionId ?? undefined },
+      {
+        onStarted() {
+          // nothing extra
+        },
+        onSheetMeta(meta) {
+          if (meta.index === 0) setTask('task-gen', 'done');
+          setTask('task-rows', 'running');
+          setActiveSheets((prev) => {
+            const next = [...prev];
+            next[meta.index] = { name: meta.name, rows: [] };
+            return next;
+          });
+        },
+        onSheetRow(row) {
+          setActiveSheets((prev) => {
+            const next = prev.slice();
+            const sheet = next[row.sheetIndex] ?? { name: `Sheet ${row.sheetIndex + 1}`, rows: [] };
+            const rows = sheet.rows.slice();
+            rows[row.rowIndex] = row.cells;
+            next[row.sheetIndex] = { ...sheet, rows };
+            return next;
+          });
+        },
+        onCompleted(done) {
+          setActiveSheetTitle(done.title);
+          setActiveSpreadsheetId(done.sheetId);
+          setSheetStreaming(false);
+          setTask('task-rows', 'done');
+          setTask('task-save', 'done');
+          setOverall('done');
+          setLoading(false);
+        },
+        onError(msg) {
+          setSheetStreaming(false);
+          setTask('task-gen', 'error');
+          setOverall('error');
+          setLoading(false);
+          setMessages((prev) => [
+            ...prev,
+            { id: `asst-err-${Date.now()}`, kind: 'assistant-text', content: msg },
+          ]);
+        },
+      }
+    );
+  }, [serverSessionId]);
+
   const sendMessage = useCallback(async (text: string) => {
     const trimmed = text.trim();
     if (!trimmed || loading) return;
@@ -1102,9 +1206,7 @@ export default function AIChatPage() {
       return;
     }
     if (forceMode === 'sheet') {
-      // Spreadsheet mode hint — Phase 4G adds a dedicated runSpreadsheetFlow;
-      // for now route through code agent with a prompt hint.
-      runCodeFlow(`Build a spreadsheet for: ${trimmed}\n\nProduce CSV-shaped output that the user can copy or save as .xlsx.`);
+      await runSpreadsheetFlow(trimmed);
       return;
     }
 
@@ -1220,7 +1322,9 @@ export default function AIChatPage() {
   }, [workspace, projectName, navigate]);
 
   const hasArtifact =
-    workspace.files.size > 0 || computerCtx.state.timeline.length > 0;
+    workspace.files.size > 0 ||
+    computerCtx.state.timeline.length > 0 ||
+    activeSheets.length > 0;
   const artifactOpen = hasArtifact && !panelDismissed;
 
   return (
@@ -1595,6 +1699,20 @@ export default function AIChatPage() {
                   Mr8's Computer
                 </button>
               )}
+              {activeSheets.length > 0 && (
+                <button
+                  onClick={() => setRightTab('sheet')}
+                  className={`px-3 py-1 text-sm rounded transition-colors flex items-center gap-1.5 ${
+                    rightTab === 'sheet'
+                      ? 'text-brand-orange bg-surface-tertiary dark:bg-[#1A1A1A] font-semibold'
+                      : 'text-ink-tertiary dark:text-[#666] hover:text-ink-secondary dark:hover:text-[#A0A0A0]'
+                  }`}
+                  title="Spreadsheet"
+                >
+                  {sheetStreaming && <span className="w-1.5 h-1.5 rounded-full bg-brand-orange animate-pulse" />}
+                  Sheet
+                </button>
+              )}
               <button
                 onClick={() => setPanelDismissed(true)}
                 className="ml-auto p-1 rounded text-ink-tertiary dark:text-[#666] hover:text-ink dark:hover:text-[#E8E8E8] hover:bg-surface-tertiary dark:hover:bg-[#1A1A1A] transition-colors"
@@ -1615,6 +1733,12 @@ export default function AIChatPage() {
                   workspace={workspace}
                   recentFiles={recentFiles}
                   terminalLogs={terminalLogs}
+                />
+              ) : rightTab === 'sheet' ? (
+                <SpreadsheetViewer
+                  sheets={activeSheets}
+                  title={activeSheetTitle}
+                  streaming={sheetStreaming}
                 />
               ) : (
                 <PreviewPanel
