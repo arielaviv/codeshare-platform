@@ -632,4 +632,27 @@ router.post(
   }
 );
 
+/**
+ * Phase 5 / 8 — /api/ai/tool
+ * Invoked by FollowUpsCard when a suggestion has payload { kind: 'trigger_tool' }.
+ * Runs a commerce tool out-of-band (outside of an agent stream). Phase 8 will
+ * flesh out the individual tools; for now this accepts the request and echoes
+ * a stub ack so the frontend doesn't 404.
+ */
+router.post('/tool', authenticate, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { tool, input } = (req.body ?? {}) as { tool?: string; input?: unknown };
+    if (!tool) {
+      res.status(400).json({ message: 'tool name required' });
+      return;
+    }
+    // TODO Phase 8: dispatch to the commerce tool surface
+    // (propose_feature, offer_bundle, trigger_slot_spin, give_free_powerup,
+    //  threshold_unlock, rescue_churn, present_options).
+    res.json({ ok: true, tool, acknowledged: true, input });
+  } catch (err) {
+    next(err);
+  }
+});
+
 export default router;
