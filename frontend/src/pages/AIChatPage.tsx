@@ -30,6 +30,8 @@ import SpreadsheetViewer, { type SheetData } from '../components/spreadsheet/Spr
 import { streamSpreadsheetGeneration } from '../services/spreadsheetStream';
 import SlidePreviewCard from '../components/chat/SlidePreviewCard';
 import ResearchBriefCard from '../components/chat/ResearchBriefCard';
+import AudioCard from '../components/chat/AudioCard';
+import { streamAudioGeneration } from '../services/audioStream';
 import type { ResearchBrief } from '../types/deck';
 import ModeChips from '../components/chat/ModeChips';
 import { SAMPLE_PROMPTS } from '../data/sample-prompts';
@@ -141,6 +143,16 @@ type ChatItem =
       id: string;
       kind: 'research-brief';
       brief: ResearchBrief;
+    }
+  | {
+      // Phase 9E: Audio result card.
+      id: string;
+      kind: 'audio-ready';
+      audioUrl: string;
+      durationSec: number;
+      voiceName: string;
+      scriptText: string;
+      title?: string;
     };
 
 function generateId(): string {
@@ -766,6 +778,95 @@ export default function AIChatPage() {
       },
     }, selectedModel);
   }, [loading, messages, workspace, projectName, selectedModel]);
+
+  /**
+   * Audio mode (9E) — ElevenLabs TTS via /api/ai/generate-audio.
+   * Pushes goal card with "Draft script" + "Generate audio" tasks; on
+   * audio_ready, pushes inline audio-ready ChatItem with HTML5 player.
+   */
+  const runAudioFlow = useCallback(async (trimmed: string) => {
+    setInput('');
+    setLoading(true);
+
+    const userMsg: ChatItem = { id: `user-${Date.now()}`, kind: 'user', content: trimmed };
+    const intro: ChatItem = {
+      id: `asst-${Date.now() + 1}`,
+      kind: 'assistant-text',
+      content: `I'll draft a script and generate the audio.`,
+    };
+    const goalId = `goal-audio-${Date.now()}`;
+    const goalChat: ChatItem = {
+      id: goalId,
+      kind: 'goal',
+      goalId,
+      title: trimmed.length > 60 ? `${trimmed.slice(0, 57)}…` : trimmed,
+      status: 'running',
+      actions: [
+        { id: 'act-script', kind: 'write', label: 'Draft script', status: 'running' },
+        { id: 'act-tts', kind: 'image', label: 'Generate audio (ElevenLabs)', status: 'running' },
+      ],
+    };
+    setMessages((prev) => [...prev, userMsg, intro, goalChat]);
+
+    const setActionStatus = (actId: string, status: 'running' | 'done' | 'error') => {
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.id !== goalId || m.kind !== 'goal') return m;
+          return {
+            ...m,
+            actions: m.actions.map((a) => (a.id === actId ? { ...a, status } : a)),
+          };
+        })
+      );
+    };
+
+    abortRef.current = streamAudioGeneration(
+      { prompt: trimmed, sessionId: serverSessionId ?? undefined },
+      {
+        onStarted() { /* already pushed */ },
+        onScriptDrafted() {
+          setActionStatus('act-script', 'done');
+        },
+        onTtsGenerating() { /* visual feedback only */ },
+        onReady(ready) {
+          setActionStatus('act-tts', 'done');
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === goalId && m.kind === 'goal'
+                ? { ...m, status: 'done' as const, summary: `Generated ${ready.durationSec}s of audio with ${ready.voiceName}.` }
+                : m
+            )
+          );
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `audio-${Date.now()}`,
+              kind: 'audio-ready',
+              audioUrl: ready.audioUrl,
+              durationSec: ready.durationSec,
+              voiceName: ready.voiceName,
+              scriptText: ready.scriptText,
+              title: trimmed.length > 60 ? `${trimmed.slice(0, 57)}…` : trimmed,
+            },
+          ]);
+          setLoading(false);
+        },
+        onError(message) {
+          setActionStatus('act-tts', 'error');
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === goalId && m.kind === 'goal' ? { ...m, status: 'error' as const } : m
+            )
+          );
+          setMessages((prev) => [
+            ...prev,
+            { id: `asst-err-${Date.now()}`, kind: 'assistant-text', content: message },
+          ]);
+          setLoading(false);
+        },
+      }
+    );
+  }, [serverSessionId]);
 
   /**
    * Wide Research mode (9D). Calls existing /api/ai/research SSE; pushes
@@ -1414,6 +1515,10 @@ export default function AIChatPage() {
       await runResearchFlow(trimmed);
       return;
     }
+    if (forceMode === 'audio') {
+      await runAudioFlow(trimmed);
+      return;
+    }
 
     // Auto-classify the first message; once conversation has started, stay in code mode.
     if (messages.length === 0) {
@@ -1801,6 +1906,19 @@ export default function AIChatPage() {
                     return (
                       <div key={msg.id} className="animate-fade-slide-up">
                         <ResearchBriefCard brief={msg.brief} />
+                      </div>
+                    );
+                  }
+                  if (msg.kind === 'audio-ready') {
+                    return (
+                      <div key={msg.id} className="animate-fade-slide-up">
+                        <AudioCard
+                          audioUrl={msg.audioUrl}
+                          durationSec={msg.durationSec}
+                          voiceName={msg.voiceName}
+                          scriptText={msg.scriptText}
+                          title={msg.title}
+                        />
                       </div>
                     );
                   }

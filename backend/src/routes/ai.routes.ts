@@ -16,6 +16,7 @@ import type { SSEWriter } from '../services/code-agent.service';
 import { generateDeck } from '../services/slide-agent.service';
 import type { SlideAgentSSEWriter } from '../services/slide-agent.service';
 import { generateSpreadsheet } from '../services/spreadsheet.generation.service';
+import { generateAudio } from '../services/audio.generation.service';
 import { classifyIntent } from '../services/intent-classifier.service';
 import { runComputerAgent } from '../services/computer-agent.service';
 import { createComputerSSEWriter } from '../services/computer/sse-writer';
@@ -674,6 +675,52 @@ router.post(
       };
 
       await generateSpreadsheet({ topic, sheetCount, style, sessionId }, req.user._id, writer);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * Phase 9E — generate_audio SSE endpoint (ElevenLabs TTS).
+ * Streams audio_started → script_drafted → tts_generating → audio_ready.
+ */
+router.post(
+  '/generate-audio',
+  authenticate,
+  aiRateLimiter,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { prompt, scriptText, voiceId, sessionId } = (req.body ?? {}) as {
+        prompt?: string;
+        scriptText?: string;
+        voiceId?: string;
+        sessionId?: string;
+      };
+      if (!prompt || prompt.trim().length === 0) {
+        res.status(400).json({ message: 'prompt is required' });
+        return;
+      }
+      if (!req.user) {
+        res.status(401).json({ message: 'Unauthorized' });
+        return;
+      }
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.flushHeaders?.();
+
+      const writer = {
+        send(event: string, data: unknown) {
+          res.write(`event: ${event}\n`);
+          res.write(`data: ${JSON.stringify(data)}\n\n`);
+        },
+        end() {
+          res.end();
+        },
+      };
+
+      await generateAudio({ prompt, scriptText, voiceId, sessionId }, req.user._id, writer);
     } catch (err) {
       next(err);
     }
