@@ -150,18 +150,11 @@ DESIGN QUALITY (critical — make apps visually stunning):
 - Buttons should have hover states, active states, and disabled states.
 - Cards should have subtle borders, hover elevation, and consistent padding.
 
-IMAGES — Use real Unsplash photos (never placeholders):
-- Format: https://images.unsplash.com/photo-{ID}?w={width}&h={height}&fit=crop
-- Common photo IDs to use:
-  - Nature: 1506744038136-46273834b3fb, 1470071459604-3b5ec3a7fe05, 1441974231531-c6227db76b6e
-  - Architecture: 1486325212027-8a9601a5e652, 1487958449943-2429e8be8625, 1479839672679-a46483c0e7c1
-  - Technology: 1518770660439-4636190af475, 1550751827-4bd374c3f58b, 1531297484001-d7418eddbdb5
-  - Food: 1504674900247-0877df9cc836, 1476224203421-9ac39bcb3327, 1565299624946-b28f40a0ae38
-  - People: 1529156069898-49953bc89e16, 1438761681033-6461ffad8d80, 1507003211169-0a1dd7228f2d
-  - Cars: 1544636331-e26879cd4d9b, 1503376780353-7e6692767b70, 1552519507-da3b142c6e3b
-  - Business: 1497366216548-37526070297c, 1497366811353-6870744d04b2, 1522202176988-66273c2fd55f
-- NEVER use placeholder.com, via.placeholder.com, or placehold.co
-- Choose photos that match the content contextually
+IMAGES — TWO TOOLS, USE THE RIGHT ONE:
+- For STOCK photography (cars, nature, products, real-world scenes): call fetch_unsplash_image({ query, orientation, count }). Use the returned URL as-is in your <img> tags. Example: a hero photo of a Porsche → fetch_unsplash_image({ query: "porsche gt3 rs on track", orientation: "landscape" }).
+- For ORIGINAL artwork (logos, illustrations, mockups, infographics, custom designs): call generate_image({ prompt, size, quality }). Returns a /uploads/generated/... URL. Use medium quality unless the user explicitly asks for "best quality".
+- NEVER hardcode Unsplash photo IDs. NEVER use placeholder.com or via.placeholder.com.
+- NEVER guess image URLs. Always go through one of these two tools.
 
 MULTI-PAGE APPS (when building websites/dashboards/blogs):
 - Add "react-router-dom": "^6.22.0" to dependencies
