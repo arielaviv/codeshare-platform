@@ -4,6 +4,8 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import confetti from 'canvas-confetti';
 import api, { intentAPI } from '../services/api';
+import { sessionsApi, type SessionSkill } from '../services/sessionsApi';
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { streamAgent } from '../services/agentStream';
 import { requestResearch } from '../services/researchStream';
 import { streamDeckGeneration } from '../services/deckStream';
@@ -163,6 +165,10 @@ const SUGGESTION_CHIPS = [
 
 export default function AIChatPage() {
   const [sessionId] = useState(generateId);
+  // Server-side ChatSession id (Phase 6). Created on first user message.
+  const [serverSessionId, setServerSessionId] = useState<string | null>(null);
+  const [sessionTitle, setSessionTitle] = useState<string | null>(null);
+  useDocumentTitle(sessionTitle);
   const [messages, setMessages] = useState<ChatItem[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -919,6 +925,52 @@ export default function AIChatPage() {
     // Reset any artifact-panel dismissal — a new turn deserves a fresh chance
     // to auto-reveal whatever it produces.
     setPanelDismissed(false);
+
+    // Phase 6: on first user message, create a server-side ChatSession so we
+    // can name it (Haiku async), persist usage, and rehydrate later.
+    if (!serverSessionId) {
+      const inferredSkill: SessionSkill =
+        forceMode === 'deck'
+          ? 'slides'
+          : forceMode === 'design'
+            ? 'design'
+            : forceMode === 'sheet'
+              ? 'sheet'
+              : forceMode === 'code'
+                ? 'apps'
+                : 'unknown';
+      try {
+        const created = await sessionsApi.create(trimmed, inferredSkill);
+        setServerSessionId(created.id);
+        setSessionTitle(created.title);
+        // Update URL with ?session= so refresh keeps the session.
+        const u = new URL(window.location.href);
+        u.searchParams.set('session', created.id);
+        window.history.replaceState({}, '', u.toString());
+
+        // Poll for the Haiku-named title (async on the server).
+        const start = Date.now();
+        const poll = setInterval(async () => {
+          if (Date.now() - start > 10_000) {
+            clearInterval(poll);
+            return;
+          }
+          try {
+            const detail = await sessionsApi.get(created.id);
+            if (detail.titleStatus === 'named' || detail.titleStatus === 'failed') {
+              setSessionTitle(detail.title);
+              clearInterval(poll);
+            } else {
+              setSessionTitle(detail.title);
+            }
+          } catch {
+            // ignore
+          }
+        }, 1500);
+      } catch {
+        // Session creation is best-effort; the chat still works without it.
+      }
+    }
 
     // Explicit overrides via the mode toggle
     if (forceMode === 'deck') {
