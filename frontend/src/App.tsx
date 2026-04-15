@@ -3,7 +3,9 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
 import { ComputerProvider } from './contexts/ComputerContext';
 import { PrizeOrchestratorProvider } from './contexts/PrizeOrchestratorContext';
+import { ComputerModalProvider } from './contexts/ComputerModalContext';
 import { TakeoverHost } from './components/computer';
+import { ComputerModal } from './components/computer/ComputerModal';
 import AppLayout from './components/AppLayout';
 import LandingPage from './pages/LandingPage';
 import HomePage from './pages/HomePage';
@@ -42,8 +44,9 @@ function SmartHome() {
 function App() {
   return (
     <ComputerProvider>
-      <PrizeOrchestratorProvider>
-        <Routes>
+      <ComputerModalProvider>
+        <PrizeOrchestratorProvider>
+          <Routes>
           <Route path="/landing" element={<LandingPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
@@ -95,11 +98,13 @@ function App() {
               }
             />
           ) : null}
-        </Routes>
-        {/* FloatingThumbnail removed — replaced by an inline chip inside the
-            AIChatPage chat input. PrizeOrchestrator handles prize/spin queue. */}
-        <TakeoverHost />
-      </PrizeOrchestratorProvider>
+          </Routes>
+          {/* FloatingThumbnail removed — inline ComputerActivityCard in chat
+              messages anchors the modal. PrizeOrchestrator handles prize/spin queue. */}
+          <ComputerModal />
+          <TakeoverHost />
+        </PrizeOrchestratorProvider>
+      </ComputerModalProvider>
     </ComputerProvider>
   );
 }

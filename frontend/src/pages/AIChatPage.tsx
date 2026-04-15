@@ -20,6 +20,7 @@ import WorkspacePanel from '../components/WorkspacePanel';
 import PreviewPanel from '../components/PreviewPanel';
 import ToolCallCard from '../components/chat/ToolCallCard';
 import TaskListCard from '../components/chat/TaskListCard';
+import ComputerActivityCard from '../components/chat/ComputerActivityCard';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { wcManager } from '../lib/webcontainer-manager';
 import SettingsModal from '../components/SettingsModal';
@@ -58,6 +59,14 @@ type ChatItem =
       title: string;
       tasks: TaskListTask[];
       status: 'running' | 'done' | 'error';
+    }
+  | {
+      // Inline thumbnail card anchoring the Mr8's Computer modal.
+      // Pushed instead of `tool-call` for browser/python/media tools.
+      id: string;
+      kind: 'computer-activity';
+      timelineEntryId: string;
+      fallbackLabel?: string;
     };
 
 function generateId(): string {
@@ -291,29 +300,54 @@ export default function AIChatPage() {
       },
       onToolCall(name, input) {
         const id = `tool-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-        setMessages((prev) => [
-          ...prev,
-          { id, kind: 'tool-call', tool: name, input, status: 'running' },
-        ]);
+
+        const isComputerTool =
+          name === 'browser' ||
+          name.startsWith('browser:') ||
+          name === 'python_execution' ||
+          name === 'generate_image';
+
+        if (isComputerTool) {
+          // Push as a computer-activity card — the inline thumbnail anchor.
+          // The timelineEntryId here is the *agent tool call id*, but the
+          // ComputerContext entry is created independently by useComputerStream
+          // when its own SSE events fire. We use the tool-call id as the
+          // chat-item id and attempt to bridge to the latest matching
+          // TimelineEntry by recency at render time.
+          // For now we use the same id; the SSE bridge will reconcile.
+          setMessages((prev) => [
+            ...prev,
+            {
+              id,
+              kind: 'computer-activity',
+              timelineEntryId: id,
+              fallbackLabel: name === 'generate_image' ? 'Media viewer' : 'Browser',
+            },
+          ]);
+        } else {
+          setMessages((prev) => [
+            ...prev,
+            { id, kind: 'tool-call', tool: name, input, status: 'running' },
+          ]);
+        }
+
         // Tool call closes the current text segment — next delta starts a new one below.
         currentAssistantTextId = null;
 
         // Auto-launch the right surface for the kind of work that just started.
-        // If the user previously dismissed the artifact panel, force it back
-        // open — Mr8 picked up a tool, the user should see what he's doing.
         if (name === 'write_file' || name === 'delete_file') {
           setPanelDismissed(false);
           setRightTab((t) => (t === 'computer' ? 'preview' : t));
         }
-        if (name === 'browser' || name.startsWith('browser:') || name === 'python_execution') {
+        if (isComputerTool) {
           setPanelDismissed(false);
           setRightTab('computer');
 
-          // Surface browser/python tool calls as task-list entries too.
+          // Mirror into the task-list as a single task entry.
           const obj = (input ?? {}) as Record<string, unknown>;
           const action = String(obj.action ?? name.split(':')[1] ?? name);
           const target = String(
-            obj.url ?? obj.query ?? obj.selector ?? obj.text ?? action
+            obj.url ?? obj.query ?? obj.selector ?? obj.text ?? obj.prompt ?? action
           ).slice(0, 80);
           mutateTaskList((curr) => ({
             ...curr,
@@ -324,7 +358,9 @@ export default function AIChatPage() {
                 label:
                   name === 'python_execution'
                     ? `Run python script`
-                    : `Browser · ${action} ${target}`.trim(),
+                    : name === 'generate_image'
+                      ? `Generate image: ${target}`
+                      : `Browser · ${action} ${target}`.trim(),
                 status: 'running',
               },
             ],
@@ -975,6 +1011,16 @@ export default function AIChatPage() {
                           title={msg.title}
                           tasks={msg.tasks}
                           status={msg.status}
+                        />
+                      </div>
+                    );
+                  }
+                  if (msg.kind === 'computer-activity') {
+                    return (
+                      <div key={msg.id} className="animate-fade-slide-up">
+                        <ComputerActivityCard
+                          timelineEntryId={msg.timelineEntryId}
+                          fallbackLabel={msg.fallbackLabel}
                         />
                       </div>
                     );

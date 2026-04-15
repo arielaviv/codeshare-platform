@@ -1,5 +1,5 @@
 export type ComputerPanelMode = 'hidden' | 'compact' | 'expanded' | 'takeover';
-export type ComputerViewKind = 'python' | 'editor' | 'browser';
+export type ComputerViewKind = 'python' | 'editor' | 'browser' | 'media';
 
 export interface ComputerPanelState {
   mode: ComputerPanelMode;
@@ -55,6 +55,15 @@ export interface TimelineEntry {
   // Editor (write_file events)
   writePath?: string;
   writeContent?: string;
+
+  // Media (generate_image / generate_design results)
+  mediaImageUrl?: string;
+  mediaPath?: string;
+  mediaAlt?: string;
+  mediaWidth?: number;
+  mediaHeight?: number;
+  mediaPrompt?: string;
+  mediaModel?: string;
 }
 
 export interface ComputeTask {

@@ -55,6 +55,21 @@ type ComputerAction =
       durationMs: number;
     }
   | { type: 'editor-write'; id: string; path: string; content: string }
+  | {
+      type: 'media-generating';
+      id: string;
+      prompt: string;
+      model?: string;
+    }
+  | {
+      type: 'media-ready';
+      id: string;
+      imageUrl: string;
+      path?: string;
+      alt?: string;
+      width?: number;
+      height?: number;
+    }
   | { type: 'task-add'; task: ComputeTask }
   | { type: 'task-update'; id: string; patch: Partial<ComputeTask> }
   | { type: 'reset' };
@@ -206,6 +221,42 @@ function reducer(state: ComputerState, action: ComputerAction): ComputerState {
         writeContent: action.content,
         status: 'success',
       });
+      return { ...state, timeline };
+    }
+
+    case 'media-generating': {
+      const timeline = upsertEntry(state.timeline, action.id, {
+        kind: 'media',
+        mediaPrompt: action.prompt,
+        mediaModel: action.model,
+        status: 'running',
+      });
+      const activeIndex = timeline.length - 1;
+      return {
+        ...state,
+        timeline,
+        panel: {
+          ...state.panel,
+          viewMode: 'media',
+          activeIndex: state.panel.isLive ? activeIndex : state.panel.activeIndex,
+          mode: state.panel.mode === 'hidden' ? 'compact' : state.panel.mode,
+        },
+      };
+    }
+
+    case 'media-ready': {
+      const idx = state.timeline.findIndex((e) => e.id === action.id);
+      if (idx === -1) return state;
+      const timeline = state.timeline.slice();
+      timeline[idx] = {
+        ...timeline[idx],
+        status: 'success',
+        mediaImageUrl: action.imageUrl,
+        mediaPath: action.path,
+        mediaAlt: action.alt,
+        mediaWidth: action.width,
+        mediaHeight: action.height,
+      };
       return { ...state, timeline };
     }
 
