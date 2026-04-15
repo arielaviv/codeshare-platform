@@ -21,6 +21,7 @@ import PreviewPanel from '../components/PreviewPanel';
 import ToolCallCard from '../components/chat/ToolCallCard';
 import TaskListCard from '../components/chat/TaskListCard';
 import ComputerActivityCard from '../components/chat/ComputerActivityCard';
+import GoalCard, { type GoalAction } from '../components/chat/GoalCard';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { wcManager } from '../lib/webcontainer-manager';
 import SettingsModal from '../components/SettingsModal';
@@ -67,6 +68,16 @@ type ChatItem =
       kind: 'computer-activity';
       timelineEntryId: string;
       fallbackLabel?: string;
+    }
+  | {
+      // Manus-style goal card with action chips inside.
+      id: string;
+      kind: 'goal';
+      goalId: string;
+      title: string;
+      status: 'running' | 'done' | 'error';
+      actions: GoalAction[];
+      summary?: string;
     };
 
 function generateId(): string {
@@ -224,6 +235,22 @@ export default function AIChatPage() {
     // closes the current text segment; the next text_delta opens a new one.
     let currentAssistantTextId: string | null = null;
 
+    // Track the active goal id this turn. When set, tool_calls become
+    // action chips inside that goal instead of standalone ChatItems.
+    // Cleared on goal_completed.
+    let currentGoalChatId: string | null = null;
+
+    // Helper: mutate the goal card at currentGoalChatId
+    const mutateGoal = (
+      mut: (curr: Extract<ChatItem, { kind: 'goal' }>) => Extract<ChatItem, { kind: 'goal' }>
+    ) => {
+      if (!currentGoalChatId) return;
+      const goalChatId = currentGoalChatId;
+      setMessages((prev) =>
+        prev.map((m) => (m.id === goalChatId && m.kind === 'goal' ? mut(m) : m))
+      );
+    };
+
     // Helper: mutate the task-list item created above without disturbing its
     // position in the messages array. Append-only on tasks; status updates only.
     const mutateTaskList = (
@@ -301,20 +328,68 @@ export default function AIChatPage() {
       onToolCall(name, input) {
         const id = `tool-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
+        // propose_goal / complete_goal are routed via dedicated SSE events
+        // (goal_started / goal_completed); they don't render as chips.
+        if (name === 'propose_goal' || name === 'complete_goal') {
+          currentAssistantTextId = null;
+          return;
+        }
+
         const isComputerTool =
           name === 'browser' ||
           name.startsWith('browser:') ||
           name === 'python_execution' ||
           name === 'generate_image';
 
+        // If a goal is open, route the tool call into the goal as an action chip.
+        if (currentGoalChatId) {
+          const obj = (input ?? {}) as Record<string, unknown>;
+          const action = String(obj.action ?? name.split(':')[1] ?? name);
+          const target = String(
+            obj.url ?? obj.query ?? obj.selector ?? obj.text ?? obj.prompt ?? obj.path ?? action
+          );
+          const chipKind: GoalAction['kind'] =
+            name === 'browser:search' || (name === 'browser' && action === 'search')
+              ? 'search'
+              : name.startsWith('browser')
+                ? 'browse'
+                : name === 'python_execution'
+                  ? 'python'
+                  : name === 'generate_image'
+                    ? 'image'
+                    : name === 'write_file'
+                      ? 'write'
+                      : name === 'delete_file'
+                        ? 'delete'
+                        : 'browse';
+          mutateGoal((curr) => ({
+            ...curr,
+            actions: [
+              ...curr.actions,
+              {
+                id: `act-${id}`,
+                kind: chipKind,
+                label: target.slice(0, 120) || action,
+                timelineEntryId: isComputerTool ? id : undefined,
+                status: 'running',
+              },
+            ],
+          }));
+          currentAssistantTextId = null;
+          // Auto-launch surfaces just like before.
+          if (name === 'write_file' || name === 'delete_file') {
+            setPanelDismissed(false);
+            setRightTab((t) => (t === 'computer' ? 'preview' : t));
+          }
+          if (isComputerTool) {
+            setPanelDismissed(false);
+            setRightTab('computer');
+          }
+          return;
+        }
+
         if (isComputerTool) {
-          // Push as a computer-activity card — the inline thumbnail anchor.
-          // The timelineEntryId here is the *agent tool call id*, but the
-          // ComputerContext entry is created independently by useComputerStream
-          // when its own SSE events fire. We use the tool-call id as the
-          // chat-item id and attempt to bridge to the latest matching
-          // TimelineEntry by recency at render time.
-          // For now we use the same id; the SSE bridge will reconcile.
+          // Push as a computer-activity card (no goal open).
           setMessages((prev) => [
             ...prev,
             {
@@ -367,10 +442,68 @@ export default function AIChatPage() {
           }));
         }
       },
+      onGoalStarted(event) {
+        const chatId = `goal-${event.goalId}`;
+        currentGoalChatId = chatId;
+        // Initial actions seeded from plannedActions (pending state).
+        const initialActions: GoalAction[] = (event.plannedActions ?? []).map((label, i) => ({
+          id: `act-planned-${event.goalId}-${i}`,
+          kind: 'browse',
+          label,
+          status: 'running',
+        }));
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: chatId,
+            kind: 'goal',
+            goalId: event.goalId,
+            title: event.title,
+            status: 'running',
+            actions: initialActions,
+          },
+        ]);
+        currentAssistantTextId = null;
+      },
+      onGoalCompleted(event) {
+        if (!currentGoalChatId) return;
+        const goalChatId = currentGoalChatId;
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === goalChatId && m.kind === 'goal'
+              ? {
+                  ...m,
+                  status: event.status,
+                  summary: event.summary,
+                  // Mark all running actions as done.
+                  actions: m.actions.map((a) =>
+                    a.status === 'running' ? { ...a, status: 'done' as const } : a
+                  ),
+                }
+              : m
+          )
+        );
+        currentGoalChatId = null;
+        currentAssistantTextId = null;
+      },
       onToolResult() {
         // Mark the most recent running tool-call as done, and the corresponding
         // running task in the task-list. Phase 3 will thread tool_use_id-matched
         // results through; this is the best-effort version.
+        // Also bubbles into the active goal: marks last running action chip as done.
+        if (currentGoalChatId) {
+          const goalChatId = currentGoalChatId;
+          setMessages((prev) =>
+            prev.map((m) => {
+              if (m.id !== goalChatId || m.kind !== 'goal') return m;
+              const lastRunningIdx = [...m.actions].map((a, i) => ({ a, i })).reverse().find((p) => p.a.status === 'running')?.i;
+              if (lastRunningIdx === undefined) return m;
+              const next = m.actions.slice();
+              next[lastRunningIdx] = { ...next[lastRunningIdx], status: 'done' };
+              return { ...m, actions: next };
+            })
+          );
+        }
         setMessages((prev) => {
           let next = prev;
           // Last running tool-call → done
@@ -1021,6 +1154,18 @@ export default function AIChatPage() {
                         <ComputerActivityCard
                           timelineEntryId={msg.timelineEntryId}
                           fallbackLabel={msg.fallbackLabel}
+                        />
+                      </div>
+                    );
+                  }
+                  if (msg.kind === 'goal') {
+                    return (
+                      <div key={msg.id} className="animate-fade-slide-up">
+                        <GoalCard
+                          title={msg.title}
+                          status={msg.status}
+                          actions={msg.actions}
+                          summary={msg.summary}
                         />
                       </div>
                     );

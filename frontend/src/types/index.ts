@@ -68,6 +68,17 @@ export interface PrizeAward {
   reason: string;
 }
 
+export interface GoalStartedEvent {
+  goalId: string;
+  title: string;
+  plannedActions: string[];
+}
+
+export interface GoalCompletedEvent {
+  summary: string;
+  status: 'done' | 'error';
+}
+
 export interface AgentSSEHandlers {
   onTextDelta: (content: string) => void;
   onFileWrite: (path: string, content: string) => void;
@@ -77,6 +88,8 @@ export interface AgentSSEHandlers {
   onPrizeAwarded?: (prize: PrizeAward) => void;
   onPlanProposed?: (event: import('./agent-events').PlanProposedEvent) => void;
   onDeliveryStatus?: (event: import('./agent-events').DeliveryStatusEvent) => void;
+  onGoalStarted?: (event: GoalStartedEvent) => void;
+  onGoalCompleted?: (event: GoalCompletedEvent) => void;
   onError: (message: string) => void;
   onDone: (filesModified: string[]) => void;
 }

@@ -116,6 +116,19 @@ export function streamAgent(
                   reason: parsed.reason,
                 });
                 break;
+              case 'goal_started':
+                handlers.onGoalStarted?.({
+                  goalId: parsed.goalId,
+                  title: parsed.title,
+                  plannedActions: parsed.plannedActions || [],
+                });
+                break;
+              case 'goal_completed':
+                handlers.onGoalCompleted?.({
+                  summary: parsed.summary,
+                  status: parsed.status || 'done',
+                });
+                break;
               case 'error':
                 handlers.onError(parsed.message || 'Unknown error');
                 break;
