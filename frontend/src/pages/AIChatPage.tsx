@@ -93,6 +93,27 @@ type ChatItem =
       id: string;
       kind: 'follow-ups';
       suggestions: FollowUpSuggestion[];
+    }
+  | {
+      // Phase 7: plan approval inline in the transcript.
+      id: string;
+      kind: 'plan-approval';
+      planEvent: PlanProposedEvent;
+      status: 'pending' | 'accepted' | 'rejected';
+    }
+  | {
+      // Phase 7: delivery-ready (Accept & Merge) inline in the transcript.
+      id: string;
+      kind: 'delivery-ready';
+      planEvent: PlanProposedEvent;
+      status: 'pending' | 'accepted' | 'rejected';
+    }
+  | {
+      // Phase 7: charged confirmation inline — shown on wallet debit success.
+      id: string;
+      kind: 'charged';
+      amountCents: number;
+      newBalanceCents: number;
     };
 
 function generateId(): string {
@@ -199,7 +220,8 @@ export default function AIChatPage() {
   const [forceMode, setForceMode] = useState<'auto' | 'code' | 'deck' | 'design' | 'sheet'>('auto');
   const [prize, setPrize] = useState<PrizeAward | null>(null);
   const [activePlan, setActivePlan] = useState<PlanProposedEvent | null>(null);
-  const [deliveryStatus, setDeliveryStatus] = useState<DeliveryStatusEvent['status'] | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [_deliveryStatus, setDeliveryStatus] = useState<DeliveryStatusEvent['status'] | null>(null);
   const [acceptingDelivery, setAcceptingDelivery] = useState(false);
   const { refreshUser } = useAuth();
   const computerCtx = useComputer();
@@ -616,11 +638,43 @@ export default function AIChatPage() {
         refreshUser();
       },
       onPlanProposed(event) {
+        // Keep state for the handlers (activePlan/deliveryStatus used by
+        // acceptPlanAndBuild / acceptDelivery callbacks).
         setActivePlan(event);
         setDeliveryStatus('scoped');
+        // Also push as inline ChatItem (Phase 7 move off sticky bar).
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `plan-${event.planId}`,
+            kind: 'plan-approval',
+            planEvent: event,
+            status: 'pending',
+          },
+        ]);
       },
       onDeliveryStatus(event) {
         setDeliveryStatus(event.status);
+        if (event.status === 'verified' && activePlan) {
+          // Push delivery-ready inline. Status becomes 'accepted' after user accepts.
+          setMessages((prev) => {
+            // Mark previous plan-approval as accepted since we're now past scoping.
+            const withAccepted = prev.map((m) =>
+              m.kind === 'plan-approval' && m.status === 'pending'
+                ? { ...m, status: 'accepted' as const }
+                : m
+            );
+            return [
+              ...withAccepted,
+              {
+                id: `delivery-${event.planId || activePlan.planId}`,
+                kind: 'delivery-ready',
+                planEvent: activePlan,
+                status: 'pending',
+              },
+            ];
+          });
+        }
       },
       onError(message) {
         // If no text yet this turn, surface the error as an assistant-text item.
@@ -706,6 +760,23 @@ export default function AIChatPage() {
         { planId: activePlan.planId, priceCents: activePlan.pricing.dealerCents },
       );
       if (data.ok) {
+        // Mutate the delivery-ready ChatItem to accepted + push a charged pill inline.
+        setMessages((prev) => {
+          const withAccepted = prev.map((m) =>
+            m.kind === 'delivery-ready' && m.status === 'pending'
+              ? { ...m, status: 'accepted' as const }
+              : m
+          );
+          return [
+            ...withAccepted,
+            {
+              id: `charged-${Date.now()}`,
+              kind: 'charged',
+              amountCents: data.priceCents,
+              newBalanceCents: data.newBalanceCents,
+            },
+          ];
+        });
         setDeliveryStatus('delivered');
         setActivePlan(null);
         refreshUser();
@@ -1331,6 +1402,51 @@ export default function AIChatPage() {
                       </div>
                     );
                   }
+                  if (msg.kind === 'plan-approval') {
+                    return (
+                      <div key={msg.id} className="animate-fade-slide-up">
+                        <PlanApprovalWidget
+                          plan={msg.planEvent.plan}
+                          pricing={msg.planEvent.pricing}
+                          onAcceptBuild={msg.status === 'pending' ? acceptPlanAndBuild : () => {}}
+                          onSpinForDiscount={msg.status === 'pending' ? onSpinForDiscount : () => {}}
+                          onTellMr8={msg.status === 'pending' ? onTellMr8 : () => {}}
+                        />
+                      </div>
+                    );
+                  }
+                  if (msg.kind === 'delivery-ready') {
+                    return (
+                      <div key={msg.id} className="animate-fade-slide-up my-3">
+                        <div className="flex items-center justify-between rounded-md border border-brand-green/40 bg-brand-green-soft dark:bg-emerald-950/40 px-3 py-2 text-[11px]">
+                          <div className="text-brand-green dark:text-emerald-200">
+                            Build verified. Accept & Merge to finalize —{' '}
+                            <span className="font-semibold">
+                              ${(msg.planEvent.pricing.dealerCents / 100).toFixed(2)}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={msg.status === 'pending' ? acceptDelivery : undefined}
+                            disabled={msg.status !== 'pending' || acceptingDelivery}
+                            className="rounded bg-brand-green px-3 py-1 font-semibold text-white hover:bg-brand-green-hover disabled:opacity-60"
+                          >
+                            {msg.status === 'accepted' ? 'Accepted' : acceptingDelivery ? 'Debiting…' : 'Accept & Merge'}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  }
+                  if (msg.kind === 'charged') {
+                    return (
+                      <div key={msg.id} className="animate-fade-slide-up my-2 inline-flex items-center gap-2 text-[12px] bg-brand-green-soft dark:bg-emerald-950/40 text-brand-green dark:text-emerald-200 rounded-full px-3 py-1.5 border border-brand-green/30">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                        Charged ${(msg.amountCents / 100).toFixed(2)} · balance ${(msg.newBalanceCents / 100).toFixed(2)}
+                      </div>
+                    );
+                  }
                   return null;
                 })}
 
@@ -1347,50 +1463,8 @@ export default function AIChatPage() {
             )}
           </div>
 
-          {/* Plan approval widget — shows above the input when Mr8 has proposed
-              a plan but the user hasn't accepted yet. (Phase 3 will move this
-              into the chat transcript as a `plan-approval` ChatItem.) */}
-          {activePlan && deliveryStatus === 'scoped' && (
-            <div
-              className={`px-4 pb-2 flex-shrink-0 ${
-                artifactOpen ? '' : 'mx-auto w-full max-w-4xl'
-              }`}
-            >
-              <PlanApprovalWidget
-                plan={activePlan.plan}
-                pricing={activePlan.pricing}
-                onAcceptBuild={acceptPlanAndBuild}
-                onSpinForDiscount={onSpinForDiscount}
-                onTellMr8={onTellMr8}
-              />
-            </div>
-          )}
-
-          {/* Delivery verified — accept & merge debits the wallet. */}
-          {deliveryStatus === 'verified' && activePlan && (
-            <div
-              className={`px-4 pb-2 flex-shrink-0 ${
-                artifactOpen ? '' : 'mx-auto w-full max-w-4xl'
-              }`}
-            >
-              <div className="flex items-center justify-between rounded-md border border-brand-green/40 bg-brand-green-soft dark:bg-emerald-950/40 px-3 py-2 text-[11px]">
-                <div className="text-brand-green dark:text-emerald-200">
-                  Build verified. Accept & Merge to finalize —{' '}
-                  <span className="font-semibold">
-                    ${(activePlan.pricing.dealerCents / 100).toFixed(2)}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={acceptDelivery}
-                  disabled={acceptingDelivery}
-                  className="rounded bg-brand-green px-3 py-1 font-semibold text-white hover:bg-brand-green-hover disabled:opacity-60"
-                >
-                  {acceptingDelivery ? 'Debiting…' : 'Accept & Merge'}
-                </button>
-              </div>
-            </div>
-          )}
+          {/* Plan approval + delivery-ready + charged now live inline as
+              ChatItem kinds (Phase 7). No sticky bars above the input. */}
 
           <div
             className={`p-4 flex-shrink-0 space-y-2.5 ${
