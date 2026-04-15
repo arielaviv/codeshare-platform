@@ -22,6 +22,8 @@ import walletRoutes from './routes/wallet.routes';
 import sessionsRoutes from './routes/sessions.routes';
 import usageRoutes from './routes/usage.routes';
 import spreadsheetRoutes from './routes/spreadsheet.routes';
+import scheduledTasksRoutes from './routes/scheduled-tasks.routes';
+import { bootstrapScheduler } from './services/scheduler.service';
 
 dotenv.config({ path: path.join(__dirname, '../.env') });
 
@@ -82,6 +84,7 @@ app.use('/api/wallet', walletRoutes);
 app.use('/api/sessions', sessionsRoutes);
 app.use('/api/usage', usageRoutes);
 app.use('/api/spreadsheets', spreadsheetRoutes);
+app.use('/api/scheduled-tasks', scheduledTasksRoutes);
 
 // Error handling middleware
 app.use(errorHandler);
@@ -90,6 +93,8 @@ app.use(errorHandler);
 const startServer = async (): Promise<void> => {
   try {
     await connectDatabase();
+    // Phase 9H: register all enabled scheduled tasks with node-cron.
+    await bootstrapScheduler();
     app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
