@@ -6,6 +6,7 @@ import WalletBalanceBadge from './WalletBalanceBadge';
 import TopUpModal from './TopUpModal';
 import mr8Logo from '../assets/mr8-logo.png';
 import { formatUsd } from '../utils/formatUsd';
+import RecentSessionsPopover from './sidebar/RecentSessionsPopover';
 
 function NavItem({ to, label, icon, collapsed }: {
   to: string;
@@ -139,6 +140,7 @@ export default function AppLayout() {
 
       <nav className="flex-1 overflow-y-auto py-2">
         {!collapsed && <div className="section-label">Main</div>}
+        <RecentSessionsPopover collapsed={collapsed} />
         <NavButton
           label="New chat"
           collapsed={collapsed}
