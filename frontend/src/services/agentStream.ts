@@ -145,6 +145,11 @@ export function streamAgent(
                   model: parsed.model,
                 });
                 break;
+              case 'follow_ups_proposed':
+                handlers.onFollowUpsProposed?.({
+                  suggestions: parsed.suggestions || [],
+                });
+                break;
               case 'error':
                 handlers.onError(parsed.message || 'Unknown error');
                 break;

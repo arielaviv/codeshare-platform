@@ -24,6 +24,8 @@ import ToolCallCard from '../components/chat/ToolCallCard';
 import TaskListCard from '../components/chat/TaskListCard';
 import ComputerActivityCard from '../components/chat/ComputerActivityCard';
 import GoalCard, { type GoalAction } from '../components/chat/GoalCard';
+import TaskCompletedCard from '../components/chat/TaskCompletedCard';
+import FollowUpsCard, { type FollowUpSuggestion } from '../components/chat/FollowUpsCard';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { wcManager } from '../lib/webcontainer-manager';
 import SettingsModal from '../components/SettingsModal';
@@ -80,6 +82,17 @@ type ChatItem =
       status: 'running' | 'done' | 'error';
       actions: GoalAction[];
       summary?: string;
+    }
+  | {
+      // Green check pill at end of turn + 5-star rating.
+      id: string;
+      kind: 'task-completed';
+    }
+  | {
+      // Commerce/SOUL-driven follow-up cards.
+      id: string;
+      kind: 'follow-ups';
+      suggestions: FollowUpSuggestion[];
     };
 
 function generateId(): string {
@@ -489,6 +502,16 @@ export default function AIChatPage() {
           model: event.model,
         });
       },
+      onFollowUpsProposed(event) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `follow-${Date.now()}`,
+            kind: 'follow-ups',
+            suggestions: event.suggestions,
+          },
+        ]);
+      },
       onMediaReady(event) {
         const entryId = (() => {
           const lastActivity = [...messages].reverse().find(
@@ -622,6 +645,24 @@ export default function AIChatPage() {
             t.status === 'running' ? { ...t, status: 'done' as const } : t
           ),
         }));
+
+        // Append a task-completed pill if the agent actually did meaningful work
+        // (wrote files, opened goals, generated media). The follow-ups card is
+        // pushed separately by onFollowUpsProposed; if the agent didn't call
+        // suggest_follow_ups, no card appears (acceptable).
+        setMessages((prev) => {
+          const did = prev.some(
+            (m) =>
+              m.kind === 'goal' ||
+              m.kind === 'computer-activity' ||
+              (m.kind === 'tool-call' && m.tool === 'write_file')
+          );
+          if (!did) return prev;
+          // Only one task-completed pill per turn (don't dup if already present).
+          const alreadyHas = prev[prev.length - 1]?.kind === 'task-completed' || prev[prev.length - 1]?.kind === 'follow-ups';
+          if (alreadyHas) return prev;
+          return [...prev, { id: `done-${Date.now()}`, kind: 'task-completed' }];
+        });
 
         // Final fallback: if the agent finished with files but never spoke,
         // append a short assistant note so the transcript isn't silent.
@@ -1265,6 +1306,27 @@ export default function AIChatPage() {
                           status={msg.status}
                           actions={msg.actions}
                           summary={msg.summary}
+                        />
+                      </div>
+                    );
+                  }
+                  if (msg.kind === 'task-completed') {
+                    return (
+                      <div key={msg.id} className="animate-fade-slide-up">
+                        <TaskCompletedCard />
+                      </div>
+                    );
+                  }
+                  if (msg.kind === 'follow-ups') {
+                    return (
+                      <div key={msg.id} className="animate-fade-slide-up">
+                        <FollowUpsCard
+                          suggestions={msg.suggestions}
+                          onSendPrompt={(p) => sendMessage(p)}
+                          onOpenModal={() => {
+                            // PersonalizationModal & TopUpModal mounts come in Phase 6 PersonalizationModal task;
+                            // for now a no-op so the click doesn't error.
+                          }}
                         />
                       </div>
                     );

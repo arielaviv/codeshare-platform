@@ -106,6 +106,7 @@ export interface AgentSSEHandlers {
   onGoalCompleted?: (event: GoalCompletedEvent) => void;
   onMediaGenerating?: (event: MediaGeneratingEvent) => void;
   onMediaReady?: (event: MediaReadyEvent) => void;
+  onFollowUpsProposed?: (event: { suggestions: import('../components/chat/FollowUpsCard').FollowUpSuggestion[] }) => void;
   onError: (message: string) => void;
   onDone: (filesModified: string[]) => void;
 }

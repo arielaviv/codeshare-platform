@@ -10,6 +10,7 @@ import { proposeGoalTool } from './propose-goal.tool';
 import { completeGoalTool } from './complete-goal.tool';
 import { generateImageTool } from './generate-image.tool';
 import { fetchUnsplashImageTool } from './fetch-unsplash-image.tool';
+import { suggestFollowUpsTool } from './suggest-follow-ups.tool';
 import {
   platformToolDefinitions,
   executePlatformTool,
@@ -27,6 +28,7 @@ const builtinTools: AgentTool[] = [
   completeGoalTool,
   generateImageTool,
   fetchUnsplashImageTool,
+  suggestFollowUpsTool,
 ];
 
 const builtinByName: Map<string, AgentTool> = new Map(
