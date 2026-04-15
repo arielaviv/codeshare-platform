@@ -29,6 +29,9 @@ import FollowUpsCard, { type FollowUpSuggestion } from '../components/chat/Follo
 import SpreadsheetViewer, { type SheetData } from '../components/spreadsheet/SpreadsheetViewer';
 import { streamSpreadsheetGeneration } from '../services/spreadsheetStream';
 import SlidePreviewCard from '../components/chat/SlidePreviewCard';
+import ModeChips from '../components/chat/ModeChips';
+import { SAMPLE_PROMPTS } from '../data/sample-prompts';
+import type { ForceMode } from '../types/modes';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { wcManager } from '../lib/webcontainer-manager';
 import SettingsModal from '../components/SettingsModal';
@@ -206,12 +209,7 @@ function buildMarkdownComponents(): Components {
   };
 }
 
-const SUGGESTION_CHIPS = [
-  'Build a todo app with React and Tailwind',
-  'Create a weather dashboard',
-  'Build a markdown editor',
-  'Create a landing page with animations',
-];
+// SUGGESTION_CHIPS replaced by SAMPLE_PROMPTS (per-mode, see data/sample-prompts.ts)
 
 export default function AIChatPage() {
   const [sessionId] = useState(generateId);
@@ -239,7 +237,7 @@ export default function AIChatPage() {
   const [panelDismissed, setPanelDismissed] = useState(false);
   const [terminalLogs, setTerminalLogs] = useState('');
   const [showSettings, setShowSettings] = useState(false);
-  const [forceMode, setForceMode] = useState<'auto' | 'code' | 'deck' | 'design' | 'sheet'>('auto');
+  const [forceMode, setForceMode] = useState<ForceMode>('auto');
   const [prize, setPrize] = useState<PrizeAward | null>(null);
   const [activePlan, setActivePlan] = useState<PlanProposedEvent | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -1445,23 +1443,48 @@ export default function AIChatPage() {
             }`}
           >
             {messages.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="text-[15px] text-ink dark:text-[#E8E8E8]">What do you want to build?</span>
+              <div className="flex flex-col items-center justify-center h-full gap-6">
+                <div className="text-center">
+                  <h1 className="text-3xl font-bold text-ink dark:text-[#E8E8E8] mb-2">
+                    What can I do for you?
+                  </h1>
+                  <p className="text-xs text-ink-tertiary dark:text-[#666]">
+                    Pick a skill, or just describe what you want.
+                  </p>
                 </div>
-                <p className="text-xs text-ink-tertiary dark:text-[#666] mb-6">React + TypeScript + Tailwind apps</p>
-                <div className="grid grid-cols-2 gap-2 max-w-sm">
-                  {SUGGESTION_CHIPS.map((chip) => (
+                {/* Mode-specific sample prompts (Manus image #62/#63 pattern) */}
+                <div className="w-full max-w-2xl space-y-1.5">
+                  {(SAMPLE_PROMPTS[forceMode] ?? SAMPLE_PROMPTS.auto).map((chip) => (
                     <button
                       key={chip}
                       onClick={() => sendMessage(chip)}
                       disabled={loading}
-                      className="text-left text-xs text-ink-secondary dark:text-[#A0A0A0] bg-white dark:bg-[#1A1A1A] border border-edge dark:border-[#2A2A2A] rounded-lg px-3 py-2.5 hover:bg-surface-tertiary dark:hover:bg-[#222] hover:text-ink dark:hover:text-[#E8E8E8] transition-colors"
+                      className="w-full flex items-center gap-2 text-left text-sm text-ink dark:text-[#E8E8E8] bg-white dark:bg-[#141414] border border-edge dark:border-[#2A2A2A] rounded-lg px-4 py-3 hover:border-ink-tertiary dark:hover:border-[#444] transition-colors group"
                     >
-                      {chip}
+                      <span className="flex-1 truncate">{chip}</span>
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        className="text-ink-tertiary dark:text-[#666] flex-shrink-0 group-hover:text-brand-orange transition-colors"
+                      >
+                        <path d="M7 17L17 7" />
+                        <polyline points="17 17 7 17 7 7" transform="rotate(180 12 12)" />
+                      </svg>
                     </button>
                   ))}
                 </div>
+                {/* Mode chips (primary + More popover) */}
+                <ModeChips
+                  selectedMode={forceMode}
+                  onSelect={(m) => {
+                    setForceMode(m);
+                    textareaRef.current?.focus();
+                  }}
+                />
               </div>
             ) : (
               <div className="space-y-4">
@@ -1659,14 +1682,20 @@ export default function AIChatPage() {
                   </select>
                   <select
                     value={forceMode}
-                    onChange={(e) => setForceMode(e.target.value as 'auto' | 'code' | 'deck' | 'design' | 'sheet')}
+                    onChange={(e) => setForceMode(e.target.value as ForceMode)}
                     className="text-[11px] bg-surface-secondary dark:bg-[#141414] border border-edge dark:border-[#2A2A2A] text-ink-secondary dark:text-[#888] rounded px-2 py-1 focus:outline-none focus:border-ink-tertiary dark:focus:border-[#444] cursor-pointer"
                     title="Choose how Mr8 should respond. 'Auto' lets Mr8 pick the right tool."
                   >
                     <option value="auto">Auto</option>
-                    <option value="code">Code app</option>
-                    <option value="deck">Slide deck</option>
+                    <option value="code">Develop apps</option>
+                    <option value="schedule">Schedule task</option>
+                    <option value="research">Wide Research</option>
                     <option value="sheet">Spreadsheet</option>
+                    <option value="visualization">Visualization</option>
+                    <option value="video">Video</option>
+                    <option value="audio">Audio</option>
+                    <option value="chat">Chat mode</option>
+                    <option value="deck">Slide deck</option>
                     <option value="design">Design</option>
                   </select>
                 </div>
