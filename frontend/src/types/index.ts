@@ -79,6 +79,20 @@ export interface GoalCompletedEvent {
   status: 'done' | 'error';
 }
 
+export interface MediaGeneratingEvent {
+  prompt: string;
+  model?: string;
+}
+
+export interface MediaReadyEvent {
+  imageUrl: string;
+  path?: string;
+  width?: number;
+  height?: number;
+  prompt?: string;
+  model?: string;
+}
+
 export interface AgentSSEHandlers {
   onTextDelta: (content: string) => void;
   onFileWrite: (path: string, content: string) => void;
@@ -90,6 +104,8 @@ export interface AgentSSEHandlers {
   onDeliveryStatus?: (event: import('./agent-events').DeliveryStatusEvent) => void;
   onGoalStarted?: (event: GoalStartedEvent) => void;
   onGoalCompleted?: (event: GoalCompletedEvent) => void;
+  onMediaGenerating?: (event: MediaGeneratingEvent) => void;
+  onMediaReady?: (event: MediaReadyEvent) => void;
   onError: (message: string) => void;
   onDone: (filesModified: string[]) => void;
 }

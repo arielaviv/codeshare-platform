@@ -177,7 +177,7 @@ export default function AIChatPage() {
   const [panelDismissed, setPanelDismissed] = useState(false);
   const [terminalLogs, setTerminalLogs] = useState('');
   const [showSettings, setShowSettings] = useState(false);
-  const [forceMode, setForceMode] = useState<'auto' | 'code' | 'deck'>('auto');
+  const [forceMode, setForceMode] = useState<'auto' | 'code' | 'deck' | 'design' | 'sheet'>('auto');
   const [prize, setPrize] = useState<PrizeAward | null>(null);
   const [activePlan, setActivePlan] = useState<PlanProposedEvent | null>(null);
   const [deliveryStatus, setDeliveryStatus] = useState<DeliveryStatusEvent['status'] | null>(null);
@@ -464,6 +464,40 @@ export default function AIChatPage() {
           },
         ]);
         currentAssistantTextId = null;
+      },
+      onMediaGenerating(event) {
+        // Dispatch into ComputerContext so the inline ComputerActivityCard
+        // and the modal both pick up the in-progress state.
+        // We use the most recent generate_image computer-activity ChatItem's
+        // timelineEntryId as the entry id so frontend bridges line up.
+        const entryId = (() => {
+          const lastActivity = [...messages].reverse().find(
+            (m) => m.kind === 'computer-activity' && (m.fallbackLabel === 'Media viewer')
+          );
+          return lastActivity?.id ?? `media-${Date.now()}`;
+        })();
+        computerCtx.dispatch({
+          type: 'media-generating',
+          id: entryId,
+          prompt: event.prompt,
+          model: event.model,
+        });
+      },
+      onMediaReady(event) {
+        const entryId = (() => {
+          const lastActivity = [...messages].reverse().find(
+            (m) => m.kind === 'computer-activity' && (m.fallbackLabel === 'Media viewer')
+          );
+          return lastActivity?.id ?? `media-${Date.now()}`;
+        })();
+        computerCtx.dispatch({
+          type: 'media-ready',
+          id: entryId,
+          imageUrl: event.imageUrl,
+          path: event.path,
+          width: event.width,
+          height: event.height,
+        });
       },
       onGoalCompleted(event) {
         if (!currentGoalChatId) return;
@@ -896,6 +930,19 @@ export default function AIChatPage() {
       runCodeFlow(trimmed);
       return;
     }
+    if (forceMode === 'design') {
+      // Design mode hint — instruct the agent to call generate_image instead of
+      // writing app files. The agent's system prompt already knows about the tool;
+      // this just nudges intent.
+      runCodeFlow(`Generate a design image for: ${trimmed}\n\nUse the generate_image tool. Do not write app files.`);
+      return;
+    }
+    if (forceMode === 'sheet') {
+      // Spreadsheet mode hint — Phase 4G adds a dedicated runSpreadsheetFlow;
+      // for now route through code agent with a prompt hint.
+      runCodeFlow(`Build a spreadsheet for: ${trimmed}\n\nProduce CSV-shaped output that the user can copy or save as .xlsx.`);
+      return;
+    }
 
     // Auto-classify the first message; once conversation has started, stay in code mode.
     if (messages.length === 0) {
@@ -1259,13 +1306,15 @@ export default function AIChatPage() {
                   </select>
                   <select
                     value={forceMode}
-                    onChange={(e) => setForceMode(e.target.value as 'auto' | 'code' | 'deck')}
+                    onChange={(e) => setForceMode(e.target.value as 'auto' | 'code' | 'deck' | 'design' | 'sheet')}
                     className="text-[11px] bg-surface-secondary dark:bg-[#141414] border border-edge dark:border-[#2A2A2A] text-ink-secondary dark:text-[#888] rounded px-2 py-1 focus:outline-none focus:border-ink-tertiary dark:focus:border-[#444] cursor-pointer"
                     title="Choose how Mr8 should respond. 'Auto' lets Mr8 pick the right tool."
                   >
                     <option value="auto">Auto</option>
                     <option value="code">Code app</option>
                     <option value="deck">Slide deck</option>
+                    <option value="sheet">Spreadsheet</option>
+                    <option value="design">Design</option>
                   </select>
                 </div>
                 {/* Inline computer-status chip — shows only when Mr8's Computer

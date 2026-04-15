@@ -8,6 +8,7 @@ import { awardPrizeTool } from './award-prize.tool';
 import { proposePlanTool } from './propose-plan.tool';
 import { proposeGoalTool } from './propose-goal.tool';
 import { completeGoalTool } from './complete-goal.tool';
+import { generateImageTool } from './generate-image.tool';
 import {
   platformToolDefinitions,
   executePlatformTool,
@@ -23,6 +24,7 @@ const builtinTools: AgentTool[] = [
   proposePlanTool,
   proposeGoalTool,
   completeGoalTool,
+  generateImageTool,
 ];
 
 const builtinByName: Map<string, AgentTool> = new Map(

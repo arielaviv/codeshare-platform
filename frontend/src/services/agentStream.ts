@@ -129,6 +129,22 @@ export function streamAgent(
                   status: parsed.status || 'done',
                 });
                 break;
+              case 'media_generating':
+                handlers.onMediaGenerating?.({
+                  prompt: parsed.prompt,
+                  model: parsed.model,
+                });
+                break;
+              case 'media_ready':
+                handlers.onMediaReady?.({
+                  imageUrl: parsed.imageUrl,
+                  path: parsed.path,
+                  width: parsed.width,
+                  height: parsed.height,
+                  prompt: parsed.prompt,
+                  model: parsed.model,
+                });
+                break;
               case 'error':
                 handlers.onError(parsed.message || 'Unknown error');
                 break;
