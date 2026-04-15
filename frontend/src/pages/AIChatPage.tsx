@@ -28,6 +28,7 @@ import TaskCompletedCard from '../components/chat/TaskCompletedCard';
 import FollowUpsCard, { type FollowUpSuggestion } from '../components/chat/FollowUpsCard';
 import SpreadsheetViewer, { type SheetData } from '../components/spreadsheet/SpreadsheetViewer';
 import { streamSpreadsheetGeneration } from '../services/spreadsheetStream';
+import SlidePreviewCard from '../components/chat/SlidePreviewCard';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { wcManager } from '../lib/webcontainer-manager';
 import SettingsModal from '../components/SettingsModal';
@@ -116,6 +117,19 @@ type ChatItem =
       kind: 'charged';
       amountCents: number;
       newBalanceCents: number;
+    }
+  | {
+      // Phase 4L: slide preview card, pushed as each slide streams in.
+      id: string;
+      kind: 'slide-preview';
+      deckId: string;
+      slideId: string;
+      slideNumber: number;
+      totalSlides: number;
+      title: string;
+      subtitle?: string;
+      bulletCount?: number;
+      slideType?: string;
     };
 
 function generateId(): string {
@@ -978,8 +992,9 @@ export default function AIChatPage() {
           // already pushed
         },
         onSlideReceived(slide) {
-          setMessages((prev) =>
-            prev.map((m) => {
+          setMessages((prev) => {
+            // 1) Update the tool-call card counter.
+            const updated = prev.map((m) => {
               if (m.id !== genCardId || m.kind !== 'tool-call') return m;
               const r = (m.result ?? {}) as { slidesReceived?: number; slideCount?: number; titles?: string[] };
               const slideTitle =
@@ -993,24 +1008,54 @@ export default function AIChatPage() {
                   titles: [...(r.titles ?? []), slideTitle],
                 },
               };
-            })
-          );
+            });
+
+            // 2) Push a slide-preview ChatItem inline (Phase 4L, Manus #16).
+            //    deckId is '' until onComplete fires; we patch it afterward.
+            const content = slide.content as {
+              title?: string;
+              subtitle?: string;
+              bullets?: string[];
+            } | undefined;
+            const priorPreviews = updated.filter((m) => m.kind === 'slide-preview').length;
+            const slideNumber = priorPreviews + 1;
+            return [
+              ...updated,
+              {
+                id: `slide-${slide.id}`,
+                kind: 'slide-preview',
+                deckId: '', // filled in by onComplete
+                slideId: slide.id,
+                slideNumber,
+                totalSlides: slideCount,
+                title: content?.title ?? `Slide ${slideNumber}`,
+                subtitle: content?.subtitle,
+                bulletCount: Array.isArray(content?.bullets) ? content.bullets.length : undefined,
+                slideType: slide.type,
+              },
+            ];
+          });
         },
         onComplete({ deckId, slideCount: total }) {
           setMessages((prev) =>
-            prev.map((m) =>
-              m.id === genCardId && m.kind === 'tool-call'
-                ? {
-                    ...m,
-                    status: 'done',
-                    result: {
-                      slideCount: total,
-                      slidesReceived: total,
-                      deckId,
-                    },
-                  }
-                : m
-            )
+            prev.map((m) => {
+              // Patch deckId into all slide-preview items from this turn.
+              if (m.kind === 'slide-preview' && !m.deckId) {
+                return { ...m, deckId, totalSlides: total };
+              }
+              if (m.id === genCardId && m.kind === 'tool-call') {
+                return {
+                  ...m,
+                  status: 'done' as const,
+                  result: {
+                    slideCount: total,
+                    slidesReceived: total,
+                    deckId,
+                  },
+                };
+              }
+              return m;
+            })
           );
           setTask('task-generate', 'done');
           setTask('task-open', 'done');
@@ -1548,6 +1593,22 @@ export default function AIChatPage() {
                           <polyline points="20 6 9 17 4 12" />
                         </svg>
                         Charged ${(msg.amountCents / 100).toFixed(2)} · balance ${(msg.newBalanceCents / 100).toFixed(2)}
+                      </div>
+                    );
+                  }
+                  if (msg.kind === 'slide-preview') {
+                    return (
+                      <div key={msg.id} className="animate-fade-slide-up">
+                        <SlidePreviewCard
+                          deckId={msg.deckId}
+                          slideId={msg.slideId}
+                          slideNumber={msg.slideNumber}
+                          totalSlides={msg.totalSlides}
+                          title={msg.title}
+                          subtitle={msg.subtitle}
+                          bulletCount={msg.bulletCount}
+                          slideType={msg.slideType}
+                        />
                       </div>
                     );
                   }
