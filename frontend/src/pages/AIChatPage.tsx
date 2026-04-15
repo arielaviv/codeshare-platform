@@ -29,6 +29,8 @@ import FollowUpsCard, { type FollowUpSuggestion } from '../components/chat/Follo
 import SpreadsheetViewer, { type SheetData } from '../components/spreadsheet/SpreadsheetViewer';
 import { streamSpreadsheetGeneration } from '../services/spreadsheetStream';
 import SlidePreviewCard from '../components/chat/SlidePreviewCard';
+import ResearchBriefCard from '../components/chat/ResearchBriefCard';
+import type { ResearchBrief } from '../types/deck';
 import ModeChips from '../components/chat/ModeChips';
 import { SAMPLE_PROMPTS } from '../data/sample-prompts';
 import type { ForceMode } from '../types/modes';
@@ -133,6 +135,12 @@ type ChatItem =
       subtitle?: string;
       bulletCount?: number;
       slideType?: string;
+    }
+  | {
+      // Phase 9D: Wide Research result card.
+      id: string;
+      kind: 'research-brief';
+      brief: ResearchBrief;
     };
 
 function generateId(): string {
@@ -760,6 +768,93 @@ export default function AIChatPage() {
   }, [loading, messages, workspace, projectName, selectedModel]);
 
   /**
+   * Wide Research mode (9D). Calls existing /api/ai/research SSE; pushes
+   * goal card with browser-action chips as they arrive; on completion
+   * pushes a research-brief ChatItem inline.
+   */
+  const runResearchFlow = useCallback(async (trimmed: string) => {
+    setInput('');
+    setLoading(true);
+
+    const userMsg: ChatItem = { id: `user-${Date.now()}`, kind: 'user', content: trimmed };
+    const intro: ChatItem = {
+      id: `asst-${Date.now() + 1}`,
+      kind: 'assistant-text',
+      content: `I'll research **${trimmed}** by visiting multiple sources and synthesizing a brief.`,
+    };
+    const goalId = `goal-research-${Date.now()}`;
+    const goalChat: ChatItem = {
+      id: goalId,
+      kind: 'goal',
+      goalId,
+      title: `Research: ${trimmed}`,
+      status: 'running',
+      actions: [],
+    };
+    setMessages((prev) => [...prev, userMsg, intro, goalChat]);
+
+    try {
+      const brief = await requestResearch(trimmed, {
+        onProgress: (msg) => {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === goalId && m.kind === 'goal'
+                ? {
+                    ...m,
+                    actions: [
+                      ...m.actions,
+                      {
+                        id: `act-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                        kind: msg.startsWith('browser search') ? 'search' : 'browse',
+                        label: msg.replace(/^browser \w+\s*/, '').slice(0, 100) || msg,
+                        status: 'done',
+                      },
+                    ],
+                  }
+                : m
+            )
+          );
+        },
+      });
+
+      setMessages((prev) => {
+        const closed = prev.map((m) =>
+          m.id === goalId && m.kind === 'goal'
+            ? { ...m, status: 'done' as const, summary: brief?.summary }
+            : m
+        );
+        if (!brief) {
+          return [
+            ...closed,
+            {
+              id: `asst-err-${Date.now()}`,
+              kind: 'assistant-text',
+              content: 'Research did not return a brief. Try rephrasing the query.',
+            },
+          ];
+        }
+        return [
+          ...closed,
+          { id: `brief-${Date.now()}`, kind: 'research-brief', brief },
+        ];
+      });
+    } catch (err) {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === goalId && m.kind === 'goal' ? { ...m, status: 'error' as const } : m
+        )
+      );
+      const message = err instanceof Error ? err.message : String(err);
+      setMessages((prev) => [
+        ...prev,
+        { id: `asst-err-${Date.now()}`, kind: 'assistant-text', content: message },
+      ]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  /**
    * Chat mode (9G) — Q&A without tools. Reuses the agent stream but with
    * `chatOnly: true` so the backend strips tools and uses a minimal system
    * prompt. No goals, no task list, no artifact panel.
@@ -1315,6 +1410,10 @@ export default function AIChatPage() {
       runChatOnlyFlow(trimmed);
       return;
     }
+    if (forceMode === 'research') {
+      await runResearchFlow(trimmed);
+      return;
+    }
 
     // Auto-classify the first message; once conversation has started, stay in code mode.
     if (messages.length === 0) {
@@ -1695,6 +1794,13 @@ export default function AIChatPage() {
                           bulletCount={msg.bulletCount}
                           slideType={msg.slideType}
                         />
+                      </div>
+                    );
+                  }
+                  if (msg.kind === 'research-brief') {
+                    return (
+                      <div key={msg.id} className="animate-fade-slide-up">
+                        <ResearchBriefCard brief={msg.brief} />
                       </div>
                     );
                   }
