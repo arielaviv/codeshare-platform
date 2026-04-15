@@ -19,6 +19,8 @@ import welcomeSpinRoutes from './routes/welcomeSpin.routes';
 import anonBuildRoutes from './routes/anonBuild.routes';
 import soulRoutes from './routes/soul.routes';
 import walletRoutes from './routes/wallet.routes';
+import sessionsRoutes from './routes/sessions.routes';
+import usageRoutes from './routes/usage.routes';
 
 dotenv.config({ path: path.join(__dirname, '../.env') });
 
@@ -76,6 +78,8 @@ app.use('/api/decks', deckRoutes);
 app.use('/api/welcome-spin', welcomeSpinRoutes);
 app.use('/api/soul', soulRoutes);
 app.use('/api/wallet', walletRoutes);
+app.use('/api/sessions', sessionsRoutes);
+app.use('/api/usage', usageRoutes);
 
 // Error handling middleware
 app.use(errorHandler);

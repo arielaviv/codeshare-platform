@@ -14,6 +14,7 @@ export type UsageFeature =
 export interface IUsageEvent extends Document {
   _id: mongoose.Types.ObjectId;
   userId: mongoose.Types.ObjectId;
+  sessionId?: mongoose.Types.ObjectId;
   feature: UsageFeature;
   modelName: string;
   inputTokens?: number;
@@ -30,6 +31,12 @@ const usageEventSchema = new Schema<IUsageEvent>(
       type: Schema.Types.ObjectId,
       ref: 'User',
       required: [true, 'User ID is required'],
+    },
+    sessionId: {
+      type: Schema.Types.ObjectId,
+      ref: 'ChatSession',
+      required: false,
+      index: true,
     },
     feature: {
       type: String,
