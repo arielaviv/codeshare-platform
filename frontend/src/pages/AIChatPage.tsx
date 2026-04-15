@@ -34,6 +34,9 @@ import AudioCard from '../components/chat/AudioCard';
 import { streamAudioGeneration } from '../services/audioStream';
 import VideoCard from '../components/chat/VideoCard';
 import { streamVideoGeneration } from '../services/videoStream';
+import VisualizationCard from '../components/chat/VisualizationCard';
+import VisualizationPicker, { type ChartKind, type OutputFormat } from '../components/visualization/VisualizationPicker';
+import { streamVisualization } from '../services/visualizationStream';
 import type { ResearchBrief } from '../types/deck';
 import ModeChips from '../components/chat/ModeChips';
 import { SAMPLE_PROMPTS } from '../data/sample-prompts';
@@ -167,6 +170,17 @@ type ChatItem =
       videoUrl?: string;
       refinedPrompt?: string;
       failReason?: string;
+    }
+  | {
+      // Phase 9C: Visualization (chart) result card.
+      id: string;
+      kind: 'viz-card';
+      title?: string;
+      status: 'running' | 'done' | 'error';
+      imageUrl?: string;
+      chartKind?: string;
+      code?: string;
+      failReason?: string;
     };
 
 function generateId(): string {
@@ -272,6 +286,9 @@ export default function AIChatPage() {
   const [terminalLogs, setTerminalLogs] = useState('');
   const [showSettings, setShowSettings] = useState(false);
   const [forceMode, setForceMode] = useState<ForceMode>('auto');
+  // Phase 9C visualization picker state — only relevant when forceMode === 'visualization'.
+  const [vizOutputFormat, setVizOutputFormat] = useState<OutputFormat>('graph');
+  const [vizPreferredCharts, setVizPreferredCharts] = useState<ChartKind[]>([]);
   const [prize, setPrize] = useState<PrizeAward | null>(null);
   const [activePlan, setActivePlan] = useState<PlanProposedEvent | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -792,6 +809,73 @@ export default function AIChatPage() {
       },
     }, selectedModel);
   }, [loading, messages, workspace, projectName, selectedModel]);
+
+  /**
+   * Visualization mode (9C) — Python in E2B → PNG.
+   * For now only the 'graph' output format is fully wired; other formats
+   * (slides/website/spreadsheet/report) defer to existing flows.
+   */
+  const runVisualizationFlow = useCallback(async (trimmed: string) => {
+    setInput('');
+    setLoading(true);
+
+    // For non-graph formats, route to the existing skill flows with a hint.
+    if (vizOutputFormat === 'slides') {
+      await runDeckFlow(trimmed, trimmed);
+      return;
+    }
+    if (vizOutputFormat === 'spreadsheet') {
+      await runSpreadsheetFlow(trimmed);
+      return;
+    }
+    if (vizOutputFormat === 'website') {
+      runCodeFlow(`Build a single-page website that visualizes: ${trimmed}\n\nUse Recharts. Make at least one prominent chart of an appropriate type.`);
+      return;
+    }
+    // graph and report both produce a PNG via Python; report just adds a
+    // markdown wrapper, which we'll iterate on later.
+
+    const userMsg: ChatItem = { id: `user-${Date.now()}`, kind: 'user', content: trimmed };
+    const intro: ChatItem = {
+      id: `asst-${Date.now() + 1}`,
+      kind: 'assistant-text',
+      content: vizPreferredCharts.length > 0
+        ? `I'll build a ${vizPreferredCharts[0]} chart for you.`
+        : `I'll pick the best chart type and render it.`,
+    };
+    const cardId = `viz-${Date.now()}`;
+    const initialCard: ChatItem = {
+      id: cardId,
+      kind: 'viz-card',
+      title: trimmed.length > 60 ? `${trimmed.slice(0, 57)}…` : trimmed,
+      status: 'running',
+    };
+    setMessages((prev) => [...prev, userMsg, intro, initialCard]);
+
+    const mutate = (mut: (curr: Extract<ChatItem, { kind: 'viz-card' }>) => Extract<ChatItem, { kind: 'viz-card' }>) => {
+      setMessages((prev) =>
+        prev.map((m) => (m.id === cardId && m.kind === 'viz-card' ? mut(m) : m))
+      );
+    };
+
+    abortRef.current = streamVisualization(
+      { prompt: trimmed, preferredCharts: vizPreferredCharts, sessionId: serverSessionId ?? undefined },
+      {
+        onStarted() { /* already pushed */ },
+        onPythonDrafted(d) {
+          mutate((c) => ({ ...c, code: d.code }));
+        },
+        onChartReady(d) {
+          mutate((c) => ({ ...c, status: 'done', imageUrl: d.imageUrl, chartKind: d.chartKind, code: d.code }));
+          setLoading(false);
+        },
+        onError(message) {
+          mutate((c) => ({ ...c, status: 'error', failReason: message }));
+          setLoading(false);
+        },
+      }
+    );
+  }, [vizOutputFormat, vizPreferredCharts, serverSessionId]);
 
   /**
    * Video mode (9F) — Runway Gen-3 Turbo via /api/ai/generate-video.
@@ -1597,6 +1681,10 @@ export default function AIChatPage() {
       await runVideoFlow(trimmed);
       return;
     }
+    if (forceMode === 'visualization') {
+      await runVisualizationFlow(trimmed);
+      return;
+    }
 
     // Auto-classify the first message; once conversation has started, stay in code mode.
     if (messages.length === 0) {
@@ -1830,6 +1918,17 @@ export default function AIChatPage() {
                     textareaRef.current?.focus();
                   }}
                 />
+                {/* Visualization picker (Manus image #58–60) — only when viz mode active */}
+                {forceMode === 'visualization' && (
+                  <div className="w-full pt-4 border-t border-edge dark:border-[#1A1A1A]">
+                    <VisualizationPicker
+                      outputFormat={vizOutputFormat}
+                      preferredCharts={vizPreferredCharts}
+                      onOutputFormatChange={setVizOutputFormat}
+                      onPreferredChartsChange={setVizPreferredCharts}
+                    />
+                  </div>
+                )}
               </div>
             ) : (
               <div className="space-y-4">
@@ -2010,6 +2109,20 @@ export default function AIChatPage() {
                           progressPercent={msg.progressPercent}
                           videoUrl={msg.videoUrl}
                           refinedPrompt={msg.refinedPrompt}
+                          failReason={msg.failReason}
+                        />
+                      </div>
+                    );
+                  }
+                  if (msg.kind === 'viz-card') {
+                    return (
+                      <div key={msg.id} className="animate-fade-slide-up">
+                        <VisualizationCard
+                          title={msg.title}
+                          status={msg.status}
+                          imageUrl={msg.imageUrl}
+                          chartKind={msg.chartKind}
+                          code={msg.code}
                           failReason={msg.failReason}
                         />
                       </div>

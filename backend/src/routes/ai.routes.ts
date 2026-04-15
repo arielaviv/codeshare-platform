@@ -18,6 +18,8 @@ import type { SlideAgentSSEWriter } from '../services/slide-agent.service';
 import { generateSpreadsheet } from '../services/spreadsheet.generation.service';
 import { generateAudio } from '../services/audio.generation.service';
 import { generateVideo } from '../services/video.generation.service';
+import { generateVisualization } from '../services/visualization.generation.service';
+import type { ChartKind } from '../services/visualization.generation.service';
 import { classifyIntent } from '../services/intent-classifier.service';
 import { runComputerAgent } from '../services/computer-agent.service';
 import { createComputerSSEWriter } from '../services/computer/sse-writer';
@@ -768,6 +770,51 @@ router.post(
       };
 
       await generateVideo({ prompt, durationSec, sessionId }, req.user._id, writer);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * Phase 9C — generate_visualization SSE endpoint (Python-in-E2B chart).
+ * Streams viz_started → viz_python_drafted → code-execution-* → viz_chart_ready.
+ */
+router.post(
+  '/generate-visualization',
+  authenticate,
+  aiRateLimiter,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { prompt, preferredCharts, sessionId } = (req.body ?? {}) as {
+        prompt?: string;
+        preferredCharts?: ChartKind[];
+        sessionId?: string;
+      };
+      if (!prompt || prompt.trim().length === 0) {
+        res.status(400).json({ message: 'prompt is required' });
+        return;
+      }
+      if (!req.user) {
+        res.status(401).json({ message: 'Unauthorized' });
+        return;
+      }
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.flushHeaders?.();
+
+      const writer = {
+        send(event: string, data: unknown) {
+          res.write(`event: ${event}\n`);
+          res.write(`data: ${JSON.stringify(data)}\n\n`);
+        },
+        end() {
+          res.end();
+        },
+      };
+
+      await generateVisualization({ prompt, preferredCharts, sessionId }, req.user._id, writer);
     } catch (err) {
       next(err);
     }
