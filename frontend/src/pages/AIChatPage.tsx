@@ -32,6 +32,8 @@ import SlidePreviewCard from '../components/chat/SlidePreviewCard';
 import ResearchBriefCard from '../components/chat/ResearchBriefCard';
 import AudioCard from '../components/chat/AudioCard';
 import { streamAudioGeneration } from '../services/audioStream';
+import VideoCard from '../components/chat/VideoCard';
+import { streamVideoGeneration } from '../services/videoStream';
 import type { ResearchBrief } from '../types/deck';
 import ModeChips from '../components/chat/ModeChips';
 import { SAMPLE_PROMPTS } from '../data/sample-prompts';
@@ -153,6 +155,18 @@ type ChatItem =
       voiceName: string;
       scriptText: string;
       title?: string;
+    }
+  | {
+      // Phase 9F: Video result card. Updated in place as Runway progresses.
+      id: string;
+      kind: 'video-card';
+      title?: string;
+      durationSec: number;
+      status: 'queued' | 'running' | 'succeeded' | 'failed';
+      progressPercent?: number;
+      videoUrl?: string;
+      refinedPrompt?: string;
+      failReason?: string;
     };
 
 function generateId(): string {
@@ -778,6 +792,66 @@ export default function AIChatPage() {
       },
     }, selectedModel);
   }, [loading, messages, workspace, projectName, selectedModel]);
+
+  /**
+   * Video mode (9F) — Runway Gen-3 Turbo via /api/ai/generate-video.
+   * Pushes a video-card ChatItem and mutates it in place as the SSE
+   * progresses (queued → running → succeeded/failed).
+   */
+  const runVideoFlow = useCallback(async (trimmed: string) => {
+    setInput('');
+    setLoading(true);
+
+    const userMsg: ChatItem = { id: `user-${Date.now()}`, kind: 'user', content: trimmed };
+    const intro: ChatItem = {
+      id: `asst-${Date.now() + 1}`,
+      kind: 'assistant-text',
+      content: `I'll generate a 5-second video. Runway typically takes ~30 seconds.`,
+    };
+    const cardId = `video-${Date.now()}`;
+    const initialCard: ChatItem = {
+      id: cardId,
+      kind: 'video-card',
+      title: trimmed.length > 60 ? `${trimmed.slice(0, 57)}…` : trimmed,
+      durationSec: 5,
+      status: 'queued',
+    };
+    setMessages((prev) => [...prev, userMsg, intro, initialCard]);
+
+    const mutate = (mut: (curr: Extract<ChatItem, { kind: 'video-card' }>) => Extract<ChatItem, { kind: 'video-card' }>) => {
+      setMessages((prev) =>
+        prev.map((m) => (m.id === cardId && m.kind === 'video-card' ? mut(m) : m))
+      );
+    };
+
+    abortRef.current = streamVideoGeneration(
+      { prompt: trimmed, durationSec: 5, sessionId: serverSessionId ?? undefined },
+      {
+        onStarted() { /* already pushed */ },
+        onPromptRefined(d) {
+          mutate((c) => ({ ...c, refinedPrompt: d.refinedPrompt }));
+        },
+        onQueued() {
+          mutate((c) => ({ ...c, status: 'queued' }));
+        },
+        onProgress(d) {
+          mutate((c) => ({ ...c, status: 'running', progressPercent: d.percent }));
+        },
+        onReady(d) {
+          mutate((c) => ({ ...c, status: 'succeeded', videoUrl: d.videoUrl }));
+          setLoading(false);
+        },
+        onFailed(reason) {
+          mutate((c) => ({ ...c, status: 'failed', failReason: reason }));
+          setLoading(false);
+        },
+        onError(message) {
+          mutate((c) => ({ ...c, status: 'failed', failReason: message }));
+          setLoading(false);
+        },
+      }
+    );
+  }, [serverSessionId]);
 
   /**
    * Audio mode (9E) — ElevenLabs TTS via /api/ai/generate-audio.
@@ -1519,6 +1593,10 @@ export default function AIChatPage() {
       await runAudioFlow(trimmed);
       return;
     }
+    if (forceMode === 'video') {
+      await runVideoFlow(trimmed);
+      return;
+    }
 
     // Auto-classify the first message; once conversation has started, stay in code mode.
     if (messages.length === 0) {
@@ -1918,6 +1996,21 @@ export default function AIChatPage() {
                           voiceName={msg.voiceName}
                           scriptText={msg.scriptText}
                           title={msg.title}
+                        />
+                      </div>
+                    );
+                  }
+                  if (msg.kind === 'video-card') {
+                    return (
+                      <div key={msg.id} className="animate-fade-slide-up">
+                        <VideoCard
+                          title={msg.title}
+                          durationSec={msg.durationSec}
+                          status={msg.status}
+                          progressPercent={msg.progressPercent}
+                          videoUrl={msg.videoUrl}
+                          refinedPrompt={msg.refinedPrompt}
+                          failReason={msg.failReason}
                         />
                       </div>
                     );
