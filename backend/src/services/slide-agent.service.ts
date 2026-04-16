@@ -5,6 +5,7 @@ import { SlideDeck, ISlide, SlidePalette } from '../models/SlideDeck';
 import { UsageEvent } from '../models/UsageEvent';
 import { checkAndAwardMilestone } from './milestone.service';
 import type { ResearchBrief } from './research/research-brief.types';
+import { craftBibleFor } from './writing/craft-bible';
 
 export interface SlideAgentSSEWriter {
   send(event: string, data: unknown): void;
@@ -107,11 +108,16 @@ ${sources}${capNote}
 function buildSystemPrompt(opts: GenerateDeckOptions): string {
   const { slideCount, style = 'professional', researchBrief } = opts;
   const researchSection = researchBrief ? `\n${formatResearchBrief(researchBrief)}\n` : '';
+  const craft = craftBibleFor({ purpose: 'slide-copy' });
   return `You are the most decorated presentation designer in the world — the
 person pitch-deck legends like Figma's Series C deck, Airbnb's seed
 deck, Mercury's brand deck, and Stripe Press were modeled after.
 You are NOT making "Gartner business slides". You are making decks
 that founders print and frame.
+
+${craft}
+
+## TASK
 
 OUTPUT: Always call the create_deck tool. Never output plain text.
 

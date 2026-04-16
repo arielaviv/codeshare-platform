@@ -219,11 +219,52 @@ export const selectCoverSchema = z.object({
   selectedCoverIdx: z.number().int().min(1).max(12),
 });
 
+export const updateBookSchema = z
+  .object({
+    themeId: z
+      .enum([
+        'literary-classic',
+        'literary-modern',
+        'thriller-tight',
+        'children-warm',
+        'nonfiction-clean',
+        'memoir-warm',
+      ])
+      .optional(),
+    author: z.string().max(120, 'Author name too long').optional(),
+    title: z.string().min(1).max(200).optional(),
+  })
+  .refine((v) => Object.keys(v).length > 0, { message: 'At least one field is required' });
+
 export const classifyIntentSchema = z.object({
   prompt: z
     .string()
     .min(1, 'Prompt is required')
     .max(2000, 'Prompt cannot exceed 2000 characters'),
+});
+
+export const planBookSchema = z.object({
+  prompt: z
+    .string()
+    .min(1, 'Prompt is required')
+    .max(5000, 'Prompt cannot exceed 5000 characters'),
+});
+
+export const draftBookSchema = z.object({
+  bookId: z.string().min(1).max(64),
+  stage: z.enum(['voice-check', 'remaining', 'regenerate-chapter']),
+  chapterN: z.number().int().min(1).max(100).optional(),
+  directive: z.string().max(2000).optional(),
+  sessionId: z.string().optional(),
+}).refine(
+  (v) => v.stage !== 'regenerate-chapter' || typeof v.chapterN === 'number',
+  { message: 'chapterN is required when stage is regenerate-chapter' }
+);
+
+export const approveBookSchema = z.object({
+  approvalId: z.string().min(1).max(64),
+  choice: z.string().min(1).max(120),
+  meta: z.record(z.unknown()).optional(),
 });
 
 export const acceptDeliverySchema = z.object({
@@ -251,4 +292,8 @@ export type ClassifyIntentInput = z.infer<typeof classifyIntentSchema>;
 export type GenerateBookInput = z.infer<typeof generateBookSchema>;
 export type GenerateBookCoverInput = z.infer<typeof generateBookCoverSchema>;
 export type SelectCoverInput = z.infer<typeof selectCoverSchema>;
+export type UpdateBookInput = z.infer<typeof updateBookSchema>;
+export type PlanBookInput = z.infer<typeof planBookSchema>;
+export type DraftBookInput = z.infer<typeof draftBookSchema>;
+export type ApproveBookInput = z.infer<typeof approveBookSchema>;
 export type AcceptDeliveryInput = z.infer<typeof acceptDeliverySchema>;

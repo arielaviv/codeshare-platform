@@ -9,6 +9,8 @@ import {
   computerRateLimiter,
   researchRateLimiter,
   bookGenerationRateLimiter,
+  coverGenerationRateLimiter,
+  chapterDraftingRateLimiter,
 } from '../middleware/rateLimit.middleware';
 import { getCodeExplanation } from '../services/ai.service';
 import { chatWithTools } from '../services/ai-chat.service';
@@ -26,9 +28,13 @@ import { runComputerAgent } from '../services/computer-agent.service';
 import { createComputerSSEWriter } from '../services/computer/sse-writer';
 import type { ComputerSSEWriter } from '../services/computer/sse-writer';
 import { runResearchAgent } from '../services/research/research-agent.service';
-import { generateDeckSchema, classifyIntentSchema, acceptDeliverySchema, generateBookSchema } from '../utils/validators';
+import { generateDeckSchema, classifyIntentSchema, acceptDeliverySchema, generateBookSchema, generateBookCoverSchema, planBookSchema, draftBookSchema } from '../utils/validators';
 import { generateBook } from '../services/book-agent.service';
 import type { BookAgentSSEWriter } from '../services/book-agent.service';
+import { generateBookCovers } from '../services/book-cover.service';
+import type { BookCoverSSEWriter } from '../services/book-cover.service';
+import { planBook } from '../services/book/planner.service';
+import { runBookAgent } from '../services/book/book-agent-loop.service';
 import { ApiError } from '../middleware/error.middleware';
 import type { ChatMessage, AgentRequest } from '../types/chat';
 import { debitForFeature } from '../services/wallet.service';
@@ -856,6 +862,35 @@ router.post(
 );
 
 /**
+ * Mr8 Book — plan-book endpoint (Planner meta-step, Slice 4a).
+ * Synchronous — no SSE. Returns { strategy, rationale, questions? }.
+ * Called once at the start of a new book-intent chat so Mr8 announces
+ * its opening strategy before kicking off generation.
+ */
+router.post(
+  '/plan-book',
+  authenticate,
+  intentClassifyRateLimiter, // same cheap-Haiku budget as intent classify
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const validation = planBookSchema.safeParse(req.body);
+      if (!validation.success) {
+        throw new ApiError(validation.error.errors[0].message, 400);
+      }
+      if (!req.user) {
+        throw new ApiError('Unauthorized', 401);
+      }
+      const result = await planBook(validation.data.prompt, req.user._id);
+      res.json(result);
+    } catch (err) {
+      if (err instanceof ApiError) next(err);
+      else if (err instanceof Error) next(new ApiError(err.message, 500));
+      else next(err);
+    }
+  }
+);
+
+/**
  * Mr8 Book — generate-book SSE endpoint (outline stage for Slice 1).
  * Streams book_started → sandbox_ready → book_created → outline_generating
  *         → file_written → outline_ready → book_complete.
@@ -918,6 +953,152 @@ router.post(
         else next(err);
       } else {
         res.write(`event: error\ndata: ${JSON.stringify({ message: 'Book generation failed' })}\n\n`);
+        res.end();
+      }
+    }
+  }
+);
+
+/**
+ * Mr8 Book — generate-book-cover SSE endpoint (Slice 2).
+ * Full run: briefing_started → briefs_ready → cover_generating × 6
+ *          → cover_ready × 6 → sandbox_synced → covers_complete.
+ * Regenerate single: cover_generating → cover_ready → covers_complete.
+ */
+router.post(
+  '/generate-book-cover',
+  authenticate,
+  coverGenerationRateLimiter,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const validation = generateBookCoverSchema.safeParse(req.body);
+      if (!validation.success) {
+        throw new ApiError(validation.error.errors[0].message, 400);
+      }
+      if (!req.user) {
+        throw new ApiError('Unauthorized', 401);
+      }
+
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders();
+
+      let closed = false;
+      req.on('close', () => { closed = true; });
+
+      const writer: BookCoverSSEWriter = {
+        send(event, data) {
+          if (closed) return;
+          res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        },
+        end() {
+          if (!closed) res.end();
+        },
+      };
+
+      try {
+        await generateBookCovers(
+          {
+            bookId: validation.data.bookId,
+            userId: req.user._id,
+            regenerateIdx: validation.data.regenerateIdx,
+            author: validation.data.author,
+            sessionId: validation.data.sessionId,
+          },
+          writer
+        );
+      } catch (innerErr) {
+        const message = innerErr instanceof Error ? innerErr.message : String(innerErr);
+        try {
+          writer.send('error', { message: `Cover generation crashed: ${message}` });
+          writer.end();
+        } catch { /* socket already closed */ }
+        console.error('[book-cover] crashed after headers flushed', innerErr);
+      }
+    } catch (err) {
+      if (!res.headersSent) {
+        if (err instanceof ApiError) next(err);
+        else if (err instanceof Error) next(new ApiError(err.message, 500));
+        else next(err);
+      } else {
+        res.write(`event: error\ndata: ${JSON.stringify({ message: 'Cover generation failed' })}\n\n`);
+        res.end();
+      }
+    }
+  }
+);
+
+/**
+ * Mr8 Book — draft-book SSE endpoint (Slice 4b).
+ * Runs the book-agent tool-loop inside the E2B sandbox. Streams:
+ *   book_agent_started → text_delta / tool_call / tool_result × N
+ *   → draft.chapter_streaming × many (tokens as prose arrives)
+ *   → draft.chapter_ready (after each write_file completes)
+ *   → approval_required (when request_approval fires)
+ *   → stage_complete (when complete_stage fires) → done | error.
+ */
+router.post(
+  '/draft-book',
+  authenticate,
+  chapterDraftingRateLimiter,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const validation = draftBookSchema.safeParse(req.body);
+      if (!validation.success) {
+        throw new ApiError(validation.error.errors[0].message, 400);
+      }
+      if (!req.user) {
+        throw new ApiError('Unauthorized', 401);
+      }
+
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders();
+
+      let closed = false;
+      req.on('close', () => { closed = true; });
+
+      const writer = {
+        send(event: string, data: unknown) {
+          if (closed) return;
+          res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        },
+        end() {
+          if (!closed) res.end();
+        },
+      };
+
+      try {
+        await runBookAgent(
+          {
+            bookId: validation.data.bookId,
+            userId: req.user._id,
+            stage: validation.data.stage,
+            chapterN: validation.data.chapterN,
+            directive: validation.data.directive,
+            sessionId: validation.data.sessionId,
+          },
+          writer
+        );
+      } catch (innerErr) {
+        const message = innerErr instanceof Error ? innerErr.message : String(innerErr);
+        try {
+          writer.send('error', { message: `Book drafting crashed: ${message}` });
+          writer.end();
+        } catch { /* socket already closed */ }
+        console.error('[book-draft] crashed after headers flushed', innerErr);
+      }
+    } catch (err) {
+      if (!res.headersSent) {
+        if (err instanceof ApiError) next(err);
+        else if (err instanceof Error) next(new ApiError(err.message, 500));
+        else next(err);
+      } else {
+        res.write(`event: error\ndata: ${JSON.stringify({ message: 'Book drafting failed' })}\n\n`);
         res.end();
       }
     }

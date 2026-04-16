@@ -87,4 +87,16 @@ export const intentAPI = {
     api.post('/ai/classify-intent', { prompt }).then((r) => r.data),
 };
 
+export type BookPlanStrategy = 'ask' | 'outline-first' | 'outline-plus-cover' | 'full-drop';
+export interface BookPlanResponse {
+  strategy: BookPlanStrategy;
+  rationale: string;
+  questions?: string[];
+}
+
+export const bookPlannerAPI = {
+  plan: (prompt: string): Promise<BookPlanResponse> =>
+    api.post('/ai/plan-book', { prompt }).then((r) => r.data),
+};
+
 export default api;

@@ -1,4 +1,5 @@
 import mongoose, { Document, Schema } from 'mongoose';
+import { BOOK_THEME_IDS, type BookThemeId } from '../services/book/themes';
 
 export type BookStatus =
   | 'outline-pending'
@@ -43,6 +44,41 @@ export interface IBookChapterOutline {
   estimatedWords: number;
 }
 
+/**
+ * Per-chapter status transitions across the pipeline:
+ *   pending → drafting → drafted → editing → edited → proofing → proofed
+ * `error` can be set at any stage; a regenerate flips the relevant fields
+ * back to an earlier state.
+ */
+export type ChapterStatus =
+  | 'pending'
+  | 'drafting'
+  | 'drafted'
+  | 'editing'
+  | 'edited'
+  | 'proofing'
+  | 'proofed'
+  | 'error';
+
+export interface IBookChapter {
+  n: number;
+  title: string;
+  beat: string;
+  estimatedWords: number;
+  status: ChapterStatus;
+  /** Sandbox-relative paths (no leading /); filled as the pipeline advances. */
+  draftPath?: string;   // chapters/chXX.md
+  editedPath?: string;  // edited/chXX.md (Slice 5)
+  proofedPath?: string; // proofed/chXX.md (Slice 5)
+  audioPath?: string;   // audio/chXX.mp3 (Slice 8)
+  /** Realized word count (final prose, not estimate). */
+  wordCount?: number;
+  /** Brief summary of what the Line Editor changed — shown in Final mode. */
+  editingNotes?: string;
+  /** Last error for this chapter (draft/edit/proof). */
+  errorMessage?: string;
+}
+
 export interface IBookOutline {
   chapters: IBookChapterOutline[];
   totalEstimatedWords: number;
@@ -65,6 +101,14 @@ export interface IBook extends Document {
   outline?: IBookOutline;
   coverVariants?: IBookCoverVariant[];
   selectedCoverIdx?: number;
+  /**
+   * Per-chapter tracking — materialized from outline.chapters at draft-start.
+   * Authoritative (the sidebar + Reader read from here, not the sandbox).
+   * Survives E2B sandbox death and is the source of truth for regenerate flows.
+   */
+  chapters?: IBookChapter[];
+  /** AI-picked at outline-complete from pickThemeForOutline(); user-overridable via Studio dropdown. */
+  themeId: BookThemeId;
   status: BookStatus;
   errorMessage?: string;
   createdAt: Date;
@@ -75,7 +119,9 @@ const chapterOutlineSchema = new Schema<IBookChapterOutline>(
   {
     n: { type: Number, required: true },
     title: { type: String, required: true, maxlength: 200 },
-    beat: { type: String, required: true, maxlength: 1000 },
+    // 3000 so the craft-bible's "because"-clause themes and longer beat prose
+    // (anaphora monologues, multi-sentence beats) fit without rejection.
+    beat: { type: String, required: true, maxlength: 3000 },
     estimatedWords: { type: Number, required: true, default: 0 },
   },
   { _id: false }
@@ -89,6 +135,29 @@ const outlineSchema = new Schema<IBookOutline>(
     pov: { type: String, required: true, default: 'third-person-limited' },
     genre: { type: String, required: true, default: 'fiction' },
     tone: { type: String, required: true, default: 'literary' },
+  },
+  { _id: false }
+);
+
+const chapterSchema = new Schema<IBookChapter>(
+  {
+    n: { type: Number, required: true, min: 1 },
+    title: { type: String, required: true, maxlength: 200 },
+    beat: { type: String, required: true, maxlength: 3000 },
+    estimatedWords: { type: Number, required: true, default: 0, min: 0 },
+    status: {
+      type: String,
+      required: true,
+      enum: ['pending', 'drafting', 'drafted', 'editing', 'edited', 'proofing', 'proofed', 'error'],
+      default: 'pending',
+    },
+    draftPath: { type: String, required: false },
+    editedPath: { type: String, required: false },
+    proofedPath: { type: String, required: false },
+    audioPath: { type: String, required: false },
+    wordCount: { type: Number, required: false, min: 0 },
+    editingNotes: { type: String, required: false, maxlength: 500 },
+    errorMessage: { type: String, required: false, maxlength: 1000 },
   },
   { _id: false }
 );
@@ -126,6 +195,13 @@ const bookSchema = new Schema<IBook>(
     outline: { type: outlineSchema, required: false },
     coverVariants: { type: [coverVariantSchema], default: undefined },
     selectedCoverIdx: { type: Number, required: false, min: 1, max: 12 },
+    chapters: { type: [chapterSchema], default: undefined },
+    themeId: {
+      type: String,
+      required: true,
+      enum: BOOK_THEME_IDS,
+      default: 'literary-classic',
+    },
     status: {
       type: String,
       enum: [

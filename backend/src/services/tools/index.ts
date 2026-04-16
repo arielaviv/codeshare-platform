@@ -12,6 +12,8 @@ import { generateImageTool } from './generate-image.tool';
 import { fetchUnsplashImageTool } from './fetch-unsplash-image.tool';
 import { suggestFollowUpsTool } from './suggest-follow-ups.tool';
 import { verifyBuildTool } from './verify-build.tool';
+import { requestApprovalTool } from './request-approval.tool';
+import { completeStageTool } from './complete-stage.tool';
 import {
   platformToolDefinitions,
   executePlatformTool,
@@ -31,6 +33,8 @@ const builtinTools: AgentTool[] = [
   fetchUnsplashImageTool,
   suggestFollowUpsTool,
   verifyBuildTool,
+  requestApprovalTool,
+  completeStageTool,
 ];
 
 const builtinByName: Map<string, AgentTool> = new Map(

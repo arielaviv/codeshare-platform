@@ -5,6 +5,7 @@ import mongoose from 'mongoose';
 import Anthropic from '@anthropic-ai/sdk';
 import { AudioFile } from '../models/AudioFile';
 import { UsageEvent } from '../models/UsageEvent';
+import { craftBibleFor } from './writing/craft-bible';
 
 export interface AudioSSEWriter {
   send(event: string, data: unknown): void;
@@ -53,17 +54,26 @@ function ensureDir(dir: string): void {
 
 const SCRIPT_SYSTEM_PROMPT = `You write spoken-word scripts for AI text-to-speech.
 
+${craftBibleFor({ purpose: 'audio-script' })}
+
+## TASK
+
 Given a user prompt describing the desired audio (podcast, voiceover, audio
 guide, summary, etc.), draft the script that will be read aloud.
 
-Rules:
+Rules specific to TTS delivery:
 - Write only the words to be spoken. No stage directions, no [music],
   no "Voice 1:" labels.
 - Use full sentences with natural cadence; avoid shouty exclamation.
 - Spell out numbers when they sound better that way ("twenty-five" not "25").
 - Length: match the user's intent. Default ~200 words (~90 seconds).
   If user asks for "podcast" or specifies minutes, scale accordingly.
-- No emojis. No markdown. Just the script text.`;
+- No emojis. No markdown. Just the script text.
+- Vary sentence length for audible rhythm — same-length sentences in a row
+  sound flat when voiced.
+- Transitions between ideas should use phrases from the TRANSITIONS craft
+  section ("by contrast", "so", "meanwhile") — never "firstly / secondly /
+  finally" which sound like bullet points when read aloud.`;
 
 async function draftScript(prompt: string): Promise<string> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' });

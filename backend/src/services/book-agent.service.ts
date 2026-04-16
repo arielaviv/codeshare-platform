@@ -5,6 +5,9 @@ import { Book, type IBookOutline, type IBookChapterOutline } from '../models/Boo
 import { UsageEvent } from '../models/UsageEvent';
 import { loadE2BConfig, createComputeSandbox, connectComputeSandbox } from './computer/e2b-client';
 import { getSession, upsertSession } from './computer/e2b-session-store';
+import { craftBibleFor } from './writing/craft-bible';
+import { pickThemeForOutline } from './book/themes';
+import { maybeInitChapters } from './book/chapter-init';
 
 export interface BookAgentSSEWriter {
   send(event: string, data: unknown): void;
@@ -93,7 +96,17 @@ interface OutlineToolInput {
 }
 
 function buildSystemPrompt(targetWords: number): string {
+  // Outline prompts get VOICE_PREAMBLE + UNIVERSAL_THEMES + FEMALE_ARCHETYPES
+  // as a reference pack. We don't know genre/POV yet at outline-generation time,
+  // so we include archetypes unconditionally — the constant itself instructs
+  // the model to apply them only when a female protagonist is present.
+  const craft = craftBibleFor({ purpose: 'outline', hasFemalePov: true });
+
   return `You are a bestselling novelist and production editor. You have ghost-written across literary fiction, genre fiction (sci-fi, thriller, romance, YA, children's), and non-fiction (memoir, business, self-help, how-to). Your job right now is to produce a chapter-level outline that a drafting agent can execute cleanly.
+
+${craft}
+
+## TASK
 
 OUTPUT: Always call the write_outline tool. Never return plain text.
 
@@ -109,7 +122,7 @@ QUALITY BAR:
 
 1. Every chapter must have a concrete BEAT — what actually happens or what is concretely taught. Not "introduces the theme of loss" but "Anna finds her father's lighthouse log and realizes the lamp has been writing back to him for years."
 
-2. For FICTION: the outline must have a dramatic arc. Opening hook → inciting incident → rising complication → turn → climax → resolution. Identify which chapter does which job in the beat field if it isn't obvious.
+2. For FICTION: the outline must have a dramatic arc. Opening hook → inciting incident → rising complication → turn → climax → resolution. Identify which chapter does which job in the beat field if it isn't obvious. The 'themes' field should name AT LEAST TWO concrete universal themes from the craft reference above (e.g. "grief as inherited silence" not just "grief"), each expressed with a "because" clause baked in.
 
 3. For NON-FICTION: each chapter teaches one clean idea. Beats should read like "By the end of this chapter the reader can X." No filler chapters that just "provide context."
 
@@ -117,9 +130,9 @@ QUALITY BAR:
 
 5. Titles are 2–8 words, active voice, specific. "The Signal in the Light" beats "Chapter One: The Beginning." No generic "Introduction / Conclusion" — give them real titles.
 
-6. Themes: 2–5 concrete concepts the book explores. Not vague ("identity") but specific ("how grief distorts memory", "the cost of inherited debt").
+6. Themes: 2–5 CONCRETE concepts the book explores — named by universal theme from the craft reference where applicable (e.g. "power as addiction through small compromises"). Never vague single-word labels ("identity", "loss") — always state what the story ARGUES about the topic.
 
-7. POV: pick one and commit. For non-fiction default to second-person ("you") addressing the reader. For fiction pick what the genre expects; never mix POVs unless the user explicitly asked.
+7. POV: pick one and commit. For non-fiction default to second-person ("you") addressing the reader. For fiction pick what the genre expects; never mix POVs unless the user explicitly asked. If the protagonist is female, note in the tone/beat fields which archetype leads and whether a shift is expected across the arc.
 
 8. TONE: one tight sentence. Think of it as a director's note — "introspective and quiet, like Marilynne Robinson" or "fast-paced and propulsive, like Blake Crouch."
 
@@ -128,7 +141,9 @@ FAIL-CHECK before emitting:
 - Do the per-chapter word estimates sum to within ±10% of the requested total?
 - Is the chapter count appropriate for the target length?
 - If fiction: is there a real dramatic arc, or just a list of vibes?
-- Are titles specific and active, never "Introduction" / "Chapter 1" placeholders?`;
+- Do the themes name universal-theme claims (with "because" clauses), not topics?
+- Are titles specific and active, never "Introduction" / "Chapter 1" placeholders?
+- Have you avoided any phrase from the NO LLM TELLS blacklist in titles and beats?`;
 }
 
 function renderOutlineMarkdown(
@@ -313,6 +328,14 @@ export async function generateBook(
 
   book.title = outlineInput.title?.slice(0, 200).trim() || book.title;
   book.outline = outline;
+  // AI auto-picks the book theme from the declared genre + tone.
+  // Deterministic — same genre/tone always maps to the same theme.
+  // User can override later via the Studio's Theme dropdown.
+  book.themeId = pickThemeForOutline({ genre: outline.genre, tone: outline.tone });
+  // Materialize book.chapters[] from the outline so the sidebar + Reader have
+  // an authoritative per-chapter state record before drafting begins. Safe to
+  // call multiple times — preserves any prior drafted/edited state.
+  maybeInitChapters(book);
   book.status = 'outline-ready';
   await book.save();
 
@@ -348,6 +371,7 @@ export async function generateBook(
     chapters: outline.chapters,
     totalEstimatedWords: outline.totalEstimatedWords,
     targetWords,
+    themeId: book.themeId,
   });
 
   // 7. Usage event — best-effort.

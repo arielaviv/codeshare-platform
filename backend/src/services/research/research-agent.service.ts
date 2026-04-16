@@ -8,6 +8,7 @@ import { browserTool } from '../computer/tool-schemas';
 import type { ComputerSSEWriter } from '../computer/sse-writer';
 import type { E2BClientConfig } from '../computer/e2b-client';
 import type { ResearchBrief, ResearchSource } from './research-brief.types';
+import { craftBibleFor } from '../writing/craft-bible';
 
 const MAX_ACTIONS = 12;
 const MAX_DURATION_MS = 90_000;
@@ -50,6 +51,10 @@ const briefTool: Tool = {
 
 const RESEARCH_SYSTEM_PROMPT = `You are the Mr8 research agent. You have one tool besides the brief submission: \`browser\`.
 
+${craftBibleFor({ purpose: 'research-synthesis' })}
+
+## TASK
+
 Goal: do quick, accurate web research on the topic the user provides, then call \`emit_research_brief\` once.
 
 Process:
@@ -62,7 +67,14 @@ Constraints:
 - You have at most 12 browser actions or 90 seconds total — whichever comes first. Plan accordingly.
 - Prefer primary sources (official sites, documentation) over aggregators.
 - Do not open more tabs than you can summarize.
-- If the topic is genuinely unknowable from the web (private data, future predictions), return the best partial brief you have and note the limitation in the summary.`;
+- If the topic is genuinely unknowable from the web (private data, future predictions), return the best partial brief you have and note the limitation in the summary.
+
+Brief-writing rules:
+- The \`summary\` must read as prose, not a list. 2–4 sentences. Use the transitions
+  vocabulary from the craft reference ("by contrast", "so", "meanwhile") when
+  linking facts — never "firstly / secondly / finally".
+- \`keyFacts\` are bullet-sized but still prose-shaped: concrete, specific, with
+  real numbers where the source provides them.`;
 
 export interface ResearchContext {
   userId: string;
