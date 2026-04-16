@@ -107,6 +107,20 @@ export function clearSession(userId: string): void {
   store.delete(userId);
 }
 
+/**
+ * Best-effort kill: wipe the session record. Actual E2B sandbox teardown
+ * happens in the compute.routes handler where the SDK client is
+ * available — this just releases the in-process store slot so the next
+ * /api/compute/session call spawns fresh.
+ */
+export function killSession(userId: string): ComputerSessionRecord | undefined {
+  const session = store.get(userId);
+  if (!session) return undefined;
+  const snapshot = toRecord(session);
+  store.delete(userId);
+  return snapshot;
+}
+
 export function acquireLock(userId: string): Promise<() => void> {
   let session = store.get(userId);
   if (!session) {

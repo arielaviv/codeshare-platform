@@ -4,6 +4,7 @@
  * · Manus is using Media viewer · Generating image /home/.../foo.png".
  */
 import type { TimelineEntry } from './types';
+import { virtualizeMediaPath } from './ComputerModal';
 
 interface Props {
   entry: TimelineEntry;
@@ -12,14 +13,15 @@ interface Props {
 export function MediaView({ entry }: Props): JSX.Element {
   const isGenerating = entry.status === 'running';
   const url = entry.mediaImageUrl;
+  const displayPath = virtualizeMediaPath(entry.mediaPath ?? entry.mediaImageUrl);
 
   return (
     <div className="h-full flex flex-col bg-white dark:bg-[#0A0A0A]">
-      {/* File path subtitle row */}
-      {entry.mediaPath && (
+      {/* File path subtitle row — virtualized to /home/user/output/<file> */}
+      {displayPath && (
         <div className="flex items-center justify-center px-4 py-2 border-b border-edge dark:border-[#1A1A1A] bg-surface-secondary dark:bg-[#0F0F0F]">
           <span className="text-[12px] font-mono text-ink-secondary dark:text-[#A0A0A0] truncate max-w-full">
-            {entry.mediaPath}
+            {displayPath}
           </span>
         </div>
       )}

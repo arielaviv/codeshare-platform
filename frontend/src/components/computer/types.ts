@@ -1,5 +1,5 @@
 export type ComputerPanelMode = 'hidden' | 'compact' | 'expanded' | 'takeover';
-export type ComputerViewKind = 'python' | 'editor' | 'browser' | 'media';
+export type ComputerViewKind = 'python' | 'editor' | 'browser' | 'media' | 'idle' | 'terminal';
 
 export interface ComputerPanelState {
   mode: ComputerPanelMode;
@@ -64,6 +64,10 @@ export interface TimelineEntry {
   mediaHeight?: number;
   mediaPrompt?: string;
   mediaModel?: string;
+
+  // Terminal (WebContainer install/dev logs surfaced as a timeline entry)
+  terminalTitle?: string;
+  terminalLines?: string[];
 }
 
 export interface ComputeTask {

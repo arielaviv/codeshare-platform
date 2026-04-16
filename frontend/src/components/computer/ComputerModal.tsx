@@ -29,6 +29,8 @@ import { BrowserView } from './BrowserView';
 import { EditorView } from './EditorView';
 import { PythonView } from './PythonView';
 import { MediaView } from './MediaView';
+import { IdleView } from './IdleView';
+import { TerminalView } from './TerminalView';
 import type { TimelineEntry, ComputeTask } from './types';
 
 export function ComputerModal(): JSX.Element | null {
@@ -240,7 +242,27 @@ function describeTool(entry: TimelineEntry | undefined): ToolDescriptor | null {
   if (entry.kind === 'python') return { label: 'Python', iconKind: 'python' };
   if (entry.kind === 'editor') return { label: 'Editor', iconKind: 'editor' };
   if (entry.kind === 'media') return { label: 'Media viewer', iconKind: 'media' };
+  if (entry.kind === 'idle') return { label: 'Idle', iconKind: 'browser' };
+  if (entry.kind === 'terminal') return { label: 'Terminal', iconKind: 'python' };
   return null;
+}
+
+/**
+ * Map a host filesystem path to a virtual sandbox path so the user sees
+ * `/home/user/output/foo.png` (Manus-style) instead of leaking the
+ * server's local Windows/Linux path. We only ever expose the basename.
+ */
+export function virtualizeMediaPath(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  // Already a public uploads URL — strip to filename.
+  if (raw.startsWith('/uploads/')) {
+    const file = raw.split('/').pop() ?? raw;
+    return `/home/user/output/${file}`;
+  }
+  // Host fs path — last segment is the filename.
+  const file = raw.split(/[\\/]/).pop();
+  if (!file) return raw;
+  return `/home/user/output/${file}`;
 }
 
 function describeBreadcrumb(entry: TimelineEntry | undefined): string | null {
@@ -256,7 +278,8 @@ function describeBreadcrumb(entry: TimelineEntry | undefined): string | null {
   if (entry.kind === 'python') return entry.description ?? 'Running script';
   if (entry.kind === 'editor') return entry.writePath ?? 'Editing';
   if (entry.kind === 'media') {
-    if (entry.mediaPath) return `Generating image ${entry.mediaPath}`;
+    const display = virtualizeMediaPath(entry.mediaPath);
+    if (display) return `Generating image ${display}`;
     return entry.mediaPrompt ? `"${entry.mediaPrompt}"` : 'Generating image';
   }
   return null;
@@ -285,6 +308,8 @@ function ViewSwitch({ entry }: { entry: TimelineEntry }): JSX.Element {
   if (entry.kind === 'python') return <PythonView entry={entry} />;
   if (entry.kind === 'editor') return <EditorView entry={entry} />;
   if (entry.kind === 'media') return <MediaView entry={entry} />;
+  if (entry.kind === 'idle') return <IdleView entry={entry} />;
+  if (entry.kind === 'terminal') return <TerminalView entry={entry} />;
   return <div className="p-6 text-sm text-ink-tertiary dark:text-[#666]">Unknown view kind</div>;
 }
 

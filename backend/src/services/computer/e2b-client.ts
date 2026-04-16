@@ -43,12 +43,38 @@ export async function connectComputeSandbox(
   return ComputeSandbox.connect(sandboxId, { apiKey: config.apiKey } as never);
 }
 
-export async function createDesktopSandbox(config: E2BClientConfig): Promise<DesktopSandbox> {
-  const options: { apiKey: string; template?: string } = { apiKey: config.apiKey };
+export async function createDesktopSandbox(
+  config: E2BClientConfig,
+  opts?: { timeoutMs?: number }
+): Promise<DesktopSandbox> {
+  const options: { apiKey: string; template?: string; timeoutMs?: number } = {
+    apiKey: config.apiKey,
+  };
   if (config.desktopTemplateId) {
     options.template = config.desktopTemplateId;
   }
+  if (opts?.timeoutMs && opts.timeoutMs > 0) {
+    options.timeoutMs = opts.timeoutMs;
+  }
   return DesktopSandbox.create(options as never);
+}
+
+/** Refresh TTL on an existing sandbox without reconnecting. */
+export async function setDesktopTimeout(
+  config: E2BClientConfig,
+  sandboxId: string,
+  timeoutMs: number
+): Promise<void> {
+  await DesktopSandbox.setTimeout(sandboxId, timeoutMs, { apiKey: config.apiKey } as never);
+}
+
+/** Kill an existing sandbox without reconnecting (via the static API). */
+export async function killDesktopSandbox(
+  config: E2BClientConfig,
+  sandboxId: string
+): Promise<void> {
+  const sandbox = await DesktopSandbox.connect(sandboxId, { apiKey: config.apiKey } as never);
+  await sandbox.kill();
 }
 
 export async function connectDesktopSandbox(

@@ -219,7 +219,7 @@ async function bootChromium(sbx: DesktopSandbox): Promise<void> {
   );
 }
 
-async function bootChromiumWithRetry(sbx: DesktopSandbox): Promise<void> {
+export async function bootChromiumWithRetry(sbx: DesktopSandbox): Promise<void> {
   try {
     await bootChromium(sbx);
   } catch (err) {

@@ -70,6 +70,20 @@ type ComputerAction =
       width?: number;
       height?: number;
     }
+  | {
+      // Always-on lifecycle: E2B sandbox booted but no tool call yet.
+      type: 'sandbox-ready';
+      id: string;
+      sandboxId: string;
+    }
+  | {
+      // WebContainer-sourced terminal (npm install / npm run dev).
+      type: 'terminal-start';
+      id: string;
+      title: string;
+    }
+  | { type: 'terminal-log'; id: string; lines: string[] }
+  | { type: 'terminal-end'; id: string; status: 'success' | 'error' }
   | { type: 'task-add'; task: ComputeTask }
   | { type: 'task-update'; id: string; patch: Partial<ComputeTask> }
   | { type: 'reset' };
@@ -257,6 +271,49 @@ function reducer(state: ComputerState, action: ComputerAction): ComputerState {
         mediaWidth: action.width,
         mediaHeight: action.height,
       };
+      return { ...state, timeline };
+    }
+
+    case 'sandbox-ready': {
+      // Tiny idle entry so the chat shows a "Mr8's Computer ready" anchor
+      // from turn 1, before any real tool activity. Does not auto-open
+      // any panel — the inline chip is enough.
+      const timeline = upsertEntry(state.timeline, action.id, {
+        kind: 'idle',
+        status: 'success',
+        description: "Mr8's Computer ready",
+        mediaModel: action.sandboxId, // reuse mediaModel for debug display
+      });
+      return { ...state, timeline };
+    }
+
+    case 'terminal-start': {
+      const timeline = upsertEntry(state.timeline, action.id, {
+        kind: 'terminal',
+        status: 'running',
+        terminalTitle: action.title,
+        terminalLines: [],
+      });
+      return { ...state, timeline };
+    }
+
+    case 'terminal-log': {
+      const idx = state.timeline.findIndex((e) => e.id === action.id);
+      if (idx === -1) return state;
+      const prev = state.timeline[idx];
+      const MAX_LINES = 200;
+      const merged = [...(prev.terminalLines ?? []), ...action.lines].slice(-MAX_LINES);
+      const timeline = state.timeline.slice();
+      timeline[idx] = { ...prev, terminalLines: merged };
+      return { ...state, timeline };
+    }
+
+    case 'terminal-end': {
+      const idx = state.timeline.findIndex((e) => e.id === action.id);
+      if (idx === -1) return state;
+      const prev = state.timeline[idx];
+      const timeline = state.timeline.slice();
+      timeline[idx] = { ...prev, status: action.status };
       return { ...state, timeline };
     }
 
