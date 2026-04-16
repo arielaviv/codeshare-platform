@@ -21,6 +21,10 @@ import { useComputer } from '../contexts/ComputerContext';
 import { useComputerStream } from '../hooks/useComputerStream';
 import WorkspacePanel from '../components/WorkspacePanel';
 import PreviewPanel from '../components/PreviewPanel';
+import ArtifactPanel from '../components/shared/ArtifactPanel';
+import BookStudioPanel from '../components/book/BookStudioPanel';
+import type { LiveReaderHandle } from '../components/book/LiveReader';
+import { streamBookAgent } from '../services/bookAgentStream';
 import ToolCallCard from '../components/chat/ToolCallCard';
 import TaskListCard from '../components/chat/TaskListCard';
 import ComputerActivityCard from '../components/chat/ComputerActivityCard';
@@ -34,6 +38,13 @@ import ResearchBriefCard from '../components/chat/ResearchBriefCard';
 import AudioCard from '../components/chat/AudioCard';
 import { streamAudioGeneration } from '../services/audioStream';
 import { streamBookGeneration, type BookChapterOutline } from '../services/bookStream';
+import {
+  streamBookCoverGeneration,
+  type BookTitleTreatment,
+  type BookTitlePosition,
+} from '../services/bookCoverStream';
+import CoverPickerCard, { type CoverCellData } from '../components/chat/CoverPickerCard';
+import { bookPlannerAPI, type BookPlanStrategy } from '../services/api';
 import VideoCard from '../components/chat/VideoCard';
 import { streamVideoGeneration } from '../services/videoStream';
 import VisualizationCard from '../components/chat/VisualizationCard';
@@ -162,6 +173,16 @@ type ChatItem =
       audioKind?: 'tts' | 'sfx' | 'music';
     }
   | {
+      // Mr8 Book — Planner's chosen opening strategy, shown before generation.
+      id: string;
+      kind: 'book-plan';
+      prompt: string;                 // original user prompt, re-used when they hit Continue
+      strategy: BookPlanStrategy;
+      rationale: string;
+      questions?: string[];
+      status: 'pending' | 'answered' | 'skipped';
+    }
+  | {
       // Mr8 Book — outline preview card pushed when outline_ready fires.
       id: string;
       kind: 'book-outline';
@@ -174,6 +195,33 @@ type ChatItem =
       chapters: BookChapterOutline[];
       totalEstimatedWords: number;
       targetWords: number;
+      /** True once the user has clicked "Design covers →" so the CTA hides. */
+      coversStarted?: boolean;
+    }
+  | {
+      // Mr8 Book — cover picker grid pushed when cover generation starts.
+      id: string;
+      kind: 'cover-picker';
+      bookId: string;
+      bookTitle: string;
+      author?: string;
+      cells: CoverCellData[];
+      selectedIdx?: number;
+      regeneratingIdx?: number;
+    }
+  | {
+      // Mr8 Book — approval gate card pushed when the drafter calls
+      // request_approval (e.g. voice-check). Clicking a button hits
+      // POST /api/books/:id/approve and opens a fresh SSE for the next stage.
+      id: string;
+      kind: 'book-approval';
+      bookId: string;
+      approvalId: string;
+      gate: string;
+      prompt: string;
+      options: string[];
+      status: 'pending' | 'resolving' | 'resolved' | 'error';
+      errorMessage?: string;
     }
   | {
       // Phase 9F: Video result card. Updated in place as Runway progresses.
@@ -253,6 +301,72 @@ function toApiHistory(items: ChatItem[]): ChatMessage[] {
     }));
 }
 
+/**
+ * Turn the agent's self-written `complete_stage` summary into a clean,
+ * user-friendly status line. The raw summary ("arc runs from arrival
+ * through grief's first honest outlet to belonging-as-continuation")
+ * reads as authorial craft notes — useful for the author's file, not as
+ * the punch of a UI message.
+ */
+function buildFriendlyStageSummary(
+  stage: 'voice-check' | 'remaining' | 'regenerate-chapter',
+  status: string,
+  _rawSummary?: string
+): string {
+  if (status === 'error') return 'Something went wrong — tap Retry to try again.';
+  if (status === 'awaiting-approval') {
+    if (stage === 'voice-check') return 'Chapter 1 is ready. Pick a direction below to continue.';
+    return 'Waiting on your approval to continue.';
+  }
+  // status === 'done'
+  if (stage === 'voice-check') return 'Chapter 1 drafted. Voice approval pending.';
+  if (stage === 'regenerate-chapter') return 'Chapter regenerated.';
+  // 'remaining'
+  return 'All chapters drafted. Next up: editing pass.';
+}
+
+function planStrategyLabel(s: BookPlanStrategy): string {
+  switch (s) {
+    case 'ask':
+      return 'I have a few questions';
+    case 'outline-first':
+      return 'Outline first';
+    case 'outline-plus-cover':
+      return 'Outline + cover';
+    case 'full-drop':
+      return 'Outline + cover + chapter 1';
+  }
+}
+
+function AskQuestionRow({
+  question,
+  onAnswer,
+}: {
+  question: string;
+  onAnswer: (answer: string) => void;
+}): JSX.Element {
+  const [local, setLocal] = useState('');
+  return (
+    <div className="flex items-center gap-2 w-full">
+      <div className="text-[12px] text-ink-secondary dark:text-[#D4D4D4] flex-shrink-0 min-w-[140px]">
+        {question}
+      </div>
+      <input
+        type="text"
+        value={local}
+        onChange={(e) => setLocal(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && local.trim()) {
+            onAnswer(`${question} ${local.trim()}`);
+          }
+        }}
+        placeholder="Type + Enter"
+        className="flex-1 min-w-0 text-[12px] px-2 py-1 border border-edge dark:border-[#2A2A2A] bg-white dark:bg-[#141414] rounded focus:outline-none focus:border-brand-orange"
+      />
+    </div>
+  );
+}
+
 function buildMarkdownComponents(): Components {
   return {
     h1: ({ children }) => (
@@ -327,7 +441,12 @@ export default function AIChatPage() {
   // Haiku (fast) or Opus (top quality) from the model dropdown.
   const [selectedModel, setSelectedModel] = useState('claude-sonnet-4-6');
   const [editingName, setEditingName] = useState(false);
-  const [rightTab, setRightTab] = useState<'code' | 'preview' | 'sheet'>('preview');
+  const [rightTab, setRightTab] = useState<'code' | 'preview' | 'sheet' | 'book'>('preview');
+  const [activeBookId, setActiveBookId] = useState<string | null>(null);
+  const [bookLiveMode, setBookLiveMode] = useState(false);
+  const [bookRefreshTick, setBookRefreshTick] = useState(0);
+  const liveReaderRef = useRef<LiveReaderHandle>(null);
+  const refreshStudioBook = useCallback(() => setBookRefreshTick((t) => t + 1), []);
   // Active spreadsheet artifact (Phase 4G). Streams in row-by-row.
   const [activeSheets, setActiveSheets] = useState<SheetData[]>([]);
   const [activeSheetTitle, setActiveSheetTitle] = useState<string>('');
@@ -1347,8 +1466,12 @@ export default function AIChatPage() {
    * dispatches editor-write into the Computer panel so outline.md shows up
    * as a real file, and pushes an inline book-outline ChatItem when
    * outline_ready fires.
+   *
+   * `opts.skipUserMessage` — the Planner pushes the user message first, so
+   * when Planner's CTA kicks the flow it passes skipUserMessage to avoid a
+   * duplicate user bubble.
    */
-  const runBookFlow = useCallback(async (trimmed: string) => {
+  const runBookFlow = useCallback(async (trimmed: string, opts?: { skipUserMessage?: boolean }) => {
     setInput('');
     setLoading(true);
 
@@ -1370,7 +1493,8 @@ export default function AIChatPage() {
         { id: 'act-outline', kind: 'write', label: 'Draft outline', status: 'running' },
       ],
     };
-    setMessages((prev) => [...prev, userMsg, intro, goalChat]);
+    const toAppend: ChatItem[] = opts?.skipUserMessage ? [intro, goalChat] : [userMsg, intro, goalChat];
+    setMessages((prev) => [...prev, ...toAppend]);
 
     const setActionStatus = (actId: string, status: 'running' | 'done' | 'error') => {
       setMessages((prev) =>
@@ -1412,6 +1536,12 @@ export default function AIChatPage() {
         },
         onOutlineReady(data) {
           setActionStatus('act-outline', 'done');
+          // Open the Book Studio panel on the right as soon as the outline exists.
+          // This mounts the three-section Studio (Cover / Chapters / Downloads)
+          // against the freshly-persisted Book record.
+          setActiveBookId(data.bookId);
+          setRightTab('book');
+          setPanelDismissed(false);
           setMessages((prev) => {
             const withStatus = prev.map((m) =>
               m.id === goalId && m.kind === 'goal'
@@ -1470,6 +1600,526 @@ export default function AIChatPage() {
       }
     );
   }, [serverSessionId, computerCtx]);
+
+  /**
+   * Book Planner meta-step (Slice 4a). Runs a cheap Haiku classification to
+   * decide the opening strategy (ask / outline-first / outline-plus-cover /
+   * full-drop) and pushes a chat card with the rationale + inline CTA
+   * buttons. User chooses to proceed (fires runBookFlow) or tweak the prompt.
+   *
+   * If the planner endpoint fails, we silently fall through to runBookFlow so
+   * a Haiku blip never blocks a user's book generation.
+   */
+  const runBookPlanner = useCallback(
+    async (trimmed: string) => {
+      setInput('');
+      setLoading(true);
+      const userMsg: ChatItem = { id: `user-${Date.now()}`, kind: 'user', content: trimmed };
+      setMessages((prev) => [...prev, userMsg]);
+
+      try {
+        const plan = await bookPlannerAPI.plan(trimmed);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `book-plan-${Date.now()}`,
+            kind: 'book-plan',
+            prompt: trimmed,
+            strategy: plan.strategy,
+            rationale: plan.rationale,
+            questions: plan.questions,
+            status: 'pending',
+          },
+        ]);
+        setLoading(false);
+      } catch {
+        // Planner is best-effort — graceful fallthrough.
+        await runBookFlow(trimmed, { skipUserMessage: true });
+      }
+    },
+    [runBookFlow]
+  );
+
+  /** User clicked "Sounds good" (or its variant) on a book-plan card. */
+  const handleBookPlanContinue = useCallback(
+    (cardId: string, prompt: string, forceOutlineFirst = false) => {
+      setMessages((prev) =>
+        prev.map((m) => (m.id === cardId && m.kind === 'book-plan' ? { ...m, status: 'answered' as const } : m))
+      );
+      // forceOutlineFirst is reserved for the "Outline first, I want to tweak"
+      // button — currently the runBookFlow pipeline always starts with outline,
+      // so this flag is a no-op for Slice 4a. It'll gate cover/voice phases in 4b.
+      void forceOutlineFirst;
+      void runBookFlow(prompt, { skipUserMessage: true });
+    },
+    [runBookFlow]
+  );
+
+  /** User clicked a clarifying-question chip on an 'ask'-strategy card. */
+  const handleBookPlanAnswer = useCallback(
+    (cardId: string, originalPrompt: string, answer: string) => {
+      const augmented = `${originalPrompt}\n\n${answer}`;
+      setMessages((prev) =>
+        prev.map((m) => (m.id === cardId && m.kind === 'book-plan' ? { ...m, status: 'answered' as const } : m))
+      );
+      // Re-run the planner with the richer prompt so Mr8 can re-classify.
+      void runBookPlanner(augmented);
+    },
+    [runBookPlanner]
+  );
+
+  /**
+   * Mr8 Book Cover (Slice 2). Generates 6 cover concepts for an existing
+   * book, lets the user pick one, and supports regenerating a single cell.
+   * Cover_ready SSE events both fill the chat picker AND dispatch media-ready
+   * to the Computer panel so each PNG shows as an agent artifact.
+   */
+  const runBookCoverFlow = useCallback(
+    async (bookId: string, bookTitle: string, options?: { regenerateIdx?: number; author?: string }) => {
+      if (!options?.regenerateIdx) setInput('');
+      setLoading(true);
+
+      const coverPickerId = options?.regenerateIdx
+        ? // re-entering an existing picker — don't push a new one
+          ''
+        : `cover-picker-${Date.now()}`;
+
+      if (!options?.regenerateIdx) {
+        // Mark the originating outline card as "covers started" so its CTA hides.
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.kind === 'book-outline' && m.bookId === bookId
+              ? { ...m, coversStarted: true as const }
+              : m
+          )
+        );
+
+        const intro: ChatItem = {
+          id: `asst-cover-intro-${Date.now()}`,
+          kind: 'assistant-text',
+          content: `Designing 6 cover concepts. Each gets a dedicated art brief plus CSS-composited typography.`,
+        };
+
+        const goalId = `goal-cover-${Date.now()}`;
+        const goalChat: ChatItem = {
+          id: goalId,
+          kind: 'goal',
+          goalId,
+          title: `Cover concepts — ${bookTitle}`,
+          status: 'running',
+          actions: [
+            { id: 'act-brief', kind: 'write', label: 'Brief the art (6 concepts)', status: 'running' },
+            { id: 'act-generate', kind: 'image', label: 'Generate 6 covers in parallel', status: 'running' },
+          ],
+        };
+
+        const emptyCells: CoverCellData[] = Array.from({ length: 6 }, (_, i) => ({
+          idx: i + 1,
+          status: 'empty',
+        }));
+
+        const picker: ChatItem = {
+          id: coverPickerId,
+          kind: 'cover-picker',
+          bookId,
+          bookTitle,
+          author: options?.author,
+          cells: emptyCells,
+        };
+
+        setMessages((prev) => [...prev, intro, goalChat, picker]);
+      }
+
+      const setGoalAction = (actId: string, status: 'running' | 'done' | 'error') => {
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.kind !== 'goal') return m;
+            if (!m.title.startsWith('Cover concepts')) return m;
+            return {
+              ...m,
+              actions: m.actions.map((a) => (a.id === actId ? { ...a, status } : a)),
+            };
+          })
+        );
+      };
+
+      const updateCell = (idx: number, patch: Partial<CoverCellData>) => {
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.kind !== 'cover-picker' || m.bookId !== bookId) return m;
+            return {
+              ...m,
+              cells: m.cells.map((c) => (c.idx === idx ? { ...c, ...patch } : c)),
+              regeneratingIdx:
+                patch.status === 'ready' || patch.status === 'failed'
+                  ? m.regeneratingIdx === idx
+                    ? undefined
+                    : m.regeneratingIdx
+                  : m.regeneratingIdx,
+            };
+          })
+        );
+      };
+
+      if (options?.regenerateIdx) {
+        updateCell(options.regenerateIdx, { status: 'generating' });
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.kind === 'cover-picker' && m.bookId === bookId
+              ? { ...m, regeneratingIdx: options.regenerateIdx }
+              : m
+          )
+        );
+      }
+
+      abortRef.current = streamBookCoverGeneration(
+        { bookId, regenerateIdx: options?.regenerateIdx, author: options?.author, sessionId: serverSessionId ?? undefined },
+        {
+          onBookLoaded() { /* no-op — metadata only */ },
+          onBriefingStarted() { /* the first goal action stays 'running' */ },
+          onBriefsReady() {
+            if (!options?.regenerateIdx) setGoalAction('act-brief', 'done');
+          },
+          onCoverGenerating({ idx, conceptName }) {
+            updateCell(idx, { status: 'generating', conceptName });
+          },
+          onCoverReady(data) {
+            updateCell(data.idx, {
+              status: 'ready',
+              conceptName: data.conceptName,
+              imageUrl: data.imageUrl,
+              titleTreatment: data.titleTreatment as BookTitleTreatment,
+              titlePosition: data.titlePosition as BookTitlePosition,
+              titleColor: data.titleColor,
+              authorColor: data.authorColor,
+              paletteHexes: data.paletteHexes,
+            });
+            // Also surface each cover as a media artifact in the Computer panel
+            // so the file tree reflects cover-01.png … cover-06.png as they land.
+            computerCtx.dispatch({
+              type: 'media-ready',
+              id: `book-cover-${bookId}-${data.idx}`,
+              imageUrl: data.imageUrl,
+              path: `book/cover-${String(data.idx).padStart(2, '0')}.png`,
+              alt: data.conceptName,
+              width: 1024,
+              height: 1536,
+            });
+          },
+          onCoverFailed({ idx, message }) {
+            updateCell(idx, { status: 'failed', failMessage: message });
+          },
+          onSandboxSynced() { /* visual only; files already in Computer panel */ },
+          onSandboxSyncFailed() { /* non-fatal; the cover is still saved */ },
+          onCoversComplete() {
+            if (!options?.regenerateIdx) setGoalAction('act-generate', 'done');
+            setMessages((prev) =>
+              prev.map((m) => {
+                if (m.kind !== 'goal') return m;
+                if (!m.title.startsWith('Cover concepts')) return m;
+                return { ...m, status: 'done' as const };
+              })
+            );
+            setLoading(false);
+            // Covers are now persisted on the server — nudge the Studio to
+            // re-fetch so its Cover section renders the 6 variants instead
+            // of the stale "No covers yet" empty state.
+            refreshStudioBook();
+          },
+          onError(message) {
+            setGoalAction('act-brief', 'error');
+            setGoalAction('act-generate', 'error');
+            setMessages((prev) => [
+              ...prev,
+              { id: `asst-err-${Date.now()}`, kind: 'assistant-text' as const, content: message },
+            ]);
+            setLoading(false);
+          },
+        }
+      );
+    },
+    [serverSessionId, computerCtx, refreshStudioBook]
+  );
+
+  /** Persist the user's cover pick. Updates the picker card inline with the selected idx. */
+  const handleCoverSelect = useCallback(async (bookId: string, idx: number) => {
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.kind === 'cover-picker' && m.bookId === bookId ? { ...m, selectedIdx: idx } : m
+      )
+    );
+    try {
+      await api.patch(`/books/${bookId}/cover`, { selectedCoverIdx: idx });
+    } catch (err) {
+      // Revert if the PATCH fails, and surface an error line.
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.kind === 'cover-picker' && m.bookId === bookId ? { ...m, selectedIdx: undefined } : m
+        )
+      );
+      const message = err instanceof Error ? err.message : 'Failed to save cover selection';
+      setMessages((prev) => [
+        ...prev,
+        { id: `asst-err-${Date.now()}`, kind: 'assistant-text', content: message },
+      ]);
+      return;
+    }
+    // Refresh the Studio's book state so its Cover section reflects the
+    // freshly-persisted selectedCoverIdx + cover variants.
+    refreshStudioBook();
+    // Cover picked → auto-kick the voice-check drafting stage. The Studio
+    // flips into liveMode and chapter 1 streams in live.
+    void runBookDraftFlow(bookId, { stage: 'voice-check' });
+  // runBookDraftFlow is defined below; the void call is fine — useCallback deps are stable refs.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshStudioBook]);
+
+  /**
+   * Mr8 Book — chapter drafting (Slice 4b). Opens SSE to /api/ai/draft-book,
+   * wires events into the LiveReader (via ref), the ComputerContext (so tool
+   * calls surface in Mr8 Computer modal), and chat (approval cards / goal).
+   *
+   * Stage semantics:
+   *   voice-check        — writes chapter 1, then an approval card appears
+   *   remaining          — writes chapters 2..N sequentially
+   *   regenerate-chapter — overwrites one chapter
+   *
+   * Chapter title lookup: `draft.chapter_streaming` only carries `{ n, delta }`.
+   * We resolve the human-readable title from our in-memory outline snapshot
+   * (updated when runBookFlow finishes) to drive the chapter-opener heading.
+   */
+  const chapterTitlesRef = useRef<Map<string, Map<number, string>>>(new Map());
+  const runBookDraftFlow = useCallback(
+    async (
+      bookId: string,
+      opts: { stage: 'voice-check' | 'remaining' | 'regenerate-chapter'; chapterN?: number; directive?: string }
+    ) => {
+      // Switch Studio into live mode. Reset the reader ONLY on voice-check
+      // (a fresh chapter-1 run) — 'remaining' keeps the approved chapter 1
+      // visible and appends chapters 2..N; 'regenerate-chapter' also preserves
+      // the surrounding chapters.
+      setActiveBookId(bookId);
+      setRightTab('book');
+      setPanelDismissed(false);
+      setBookLiveMode(true);
+      if (opts.stage === 'voice-check') {
+        setTimeout(() => liveReaderRef.current?.reset(), 0);
+      }
+
+      // Preload the chapter-titles map from the latest outline card if we
+      // haven't already; makes chapter-opener headings land correctly.
+      if (!chapterTitlesRef.current.has(bookId)) {
+        const outlineCard = [...messages].reverse().find(
+          (m): m is Extract<ChatItem, { kind: 'book-outline' }> =>
+            m.kind === 'book-outline' && m.bookId === bookId
+        );
+        if (outlineCard) {
+          const titles = new Map<number, string>();
+          for (const ch of outlineCard.chapters) titles.set(ch.n, ch.title);
+          chapterTitlesRef.current.set(bookId, titles);
+        }
+      }
+      const chapterTitles = chapterTitlesRef.current.get(bookId) ?? new Map<number, string>();
+
+      // Push an intro + goal card for the stage.
+      const goalId = `goal-draft-${Date.now()}`;
+      const introText =
+        opts.stage === 'voice-check'
+          ? "I'll draft chapter 1 so you can feel the voice before I write the rest."
+          : opts.stage === 'remaining'
+            ? "Writing the remaining chapters now — you can watch them appear in the Studio."
+            : `Regenerating chapter ${opts.chapterN ?? '?'}${opts.directive ? ' with your direction' : ''}.`;
+      const goalTitle =
+        opts.stage === 'voice-check'
+          ? 'Drafting chapter 1 (voice check)'
+          : opts.stage === 'remaining'
+            ? 'Drafting remaining chapters'
+            : `Regenerating chapter ${opts.chapterN}`;
+      setMessages((prev) => [
+        ...prev,
+        { id: `asst-${Date.now()}`, kind: 'assistant-text', content: introText },
+        {
+          id: goalId,
+          kind: 'goal',
+          goalId,
+          title: goalTitle,
+          status: 'running',
+          actions: [{ id: 'act-drafting', kind: 'write', label: 'Writing prose', status: 'running' }],
+        },
+      ]);
+
+      const setGoalStatus = (status: 'running' | 'done' | 'error', summary?: string) => {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === goalId && m.kind === 'goal'
+              ? { ...m, status, summary: summary ?? m.summary, actions: m.actions.map((a) => ({ ...a, status: status === 'running' ? a.status : status })) }
+              : m
+          )
+        );
+      };
+
+      setLoading(true);
+
+      abortRef.current = streamBookAgent(
+        { bookId, stage: opts.stage, chapterN: opts.chapterN, directive: opts.directive, sessionId: serverSessionId ?? undefined },
+        {
+          onStarted() { /* goal already pushed */ },
+          onTextDelta(_text) {
+            // Agent "thinking" prose between tool calls — we discard it for now;
+            // the prose in the Reader is the real output.
+          },
+          onToolCall({ toolUseId, name, input }) {
+            // Surface tool calls in the Mr8 Computer modal exactly like the
+            // code agent does. Shared-toolbox verbs map to the existing
+            // ComputerContext actions.
+            const inputRec = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
+            if (name === 'write_file') {
+              const path = typeof inputRec.path === 'string' ? inputRec.path : '';
+              const content = typeof inputRec.content === 'string' ? inputRec.content : '';
+              computerCtx.dispatch({ type: 'editor-write', id: toolUseId, path, content });
+            } else if (name === 'read_file' || name === 'list_files' || name === 'delete_file') {
+              const path = typeof inputRec.path === 'string' ? inputRec.path : '';
+              computerCtx.dispatch({ type: 'editor-write', id: toolUseId, path, content: `${name}(${path})` });
+            } else if (name === 'browser') {
+              // Dispatch browser-start / action would need more structure;
+              // keep it simple for Slice 4b — most book runs won't browse.
+              computerCtx.dispatch({
+                type: 'python-start',
+                id: toolUseId,
+                code: JSON.stringify(input, null, 2),
+                description: `browser: ${String(inputRec.action ?? '')}`,
+              });
+            } else if (name === 'python') {
+              const code = typeof inputRec.code === 'string' ? inputRec.code : '';
+              const description = typeof inputRec.description === 'string' ? inputRec.description : 'Python';
+              computerCtx.dispatch({ type: 'python-start', id: toolUseId, code, description });
+            }
+          },
+          onToolResult({ toolUseId, name, ok, summary }) {
+            // Mark the matching computer-context entry as done/error via a
+            // python-result dispatch when it was a python/browser call. For
+            // editor-writes we don't need a separate "done" event — the write
+            // itself is the terminal state.
+            if (name === 'python' || name === 'browser') {
+              computerCtx.dispatch({
+                type: 'python-result',
+                id: toolUseId,
+                status: ok ? 'success' : 'error',
+                stdout: [],
+                stderr: ok ? [] : [summary],
+                error: ok ? undefined : { name: 'ToolError', value: summary, traceback: '' },
+                results: [],
+                outputFiles: [],
+                durationMs: 0,
+              });
+            }
+          },
+          onChapterStreaming({ n, delta }) {
+            // Push delta into the LiveReader. Chapter title comes from our
+            // preloaded map (may be empty on the very first delta of a new
+            // chapter — the paginator falls back to "Chapter N" which we
+            // refresh on the next delta once the title is known).
+            const title = chapterTitles.get(n);
+            liveReaderRef.current?.addChapterDelta(n, delta, title);
+          },
+          onChapterReady({ n }) {
+            // Visual cue — bump the goal card's action label.
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === goalId && m.kind === 'goal'
+                  ? { ...m, actions: m.actions.map((a) => (a.id === 'act-drafting' ? { ...a, label: `Chapter ${n} written` } : a)) }
+                  : m
+              )
+            );
+          },
+          onApprovalRequired(data) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: `book-approval-${Date.now()}`,
+                kind: 'book-approval',
+                bookId,
+                approvalId: data.approvalId,
+                gate: data.gate,
+                prompt: data.prompt,
+                options: data.options,
+                status: 'pending',
+              },
+            ]);
+          },
+          onStageComplete(data) {
+            // Replace the agent's literary self-summary with a concise,
+            // user-readable status line. Keep the agent's prose tucked
+            // inside the goal so curious users can expand it.
+            const friendly = buildFriendlyStageSummary(opts.stage, data.status, data.summary);
+            setGoalStatus('done', friendly);
+          },
+          onError(message) {
+            setGoalStatus('error');
+            setMessages((prev) => [
+              ...prev,
+              { id: `asst-err-${Date.now()}`, kind: 'assistant-text', content: message },
+            ]);
+            setLoading(false);
+          },
+          onDone() {
+            setLoading(false);
+            // Drafting persisted new chapter files + word counts to Mongo —
+            // refresh the Studio so ChaptersStrip, properties panel, and
+            // Downloads section see the updated state.
+            refreshStudioBook();
+          },
+        }
+      );
+    },
+    [serverSessionId, computerCtx, messages, refreshStudioBook]
+  );
+
+  /**
+   * User clicked a button on a `book-approval` chat card. Posts to
+   * /api/books/:id/approve, reads { nextStage, sseUrl, payload }, and opens
+   * the next drafting stage automatically.
+   */
+  const handleBookApproval = useCallback(
+    async (cardId: string, bookId: string, approvalId: string, choice: string) => {
+      // Mark card as resolving.
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === cardId && m.kind === 'book-approval'
+            ? { ...m, status: 'resolving' as const }
+            : m
+        )
+      );
+      try {
+        const res = await api.post(`/books/${bookId}/approve`, { approvalId, choice });
+        const data = res.data as { ok?: boolean; nextStage?: string | null; payload?: { bookId?: string; stage?: string; directive?: string; chapterN?: number } };
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === cardId && m.kind === 'book-approval'
+              ? { ...m, status: 'resolved' as const }
+              : m
+          )
+        );
+        if (data.nextStage && data.payload?.stage) {
+          await runBookDraftFlow(bookId, {
+            stage: data.payload.stage as 'voice-check' | 'remaining' | 'regenerate-chapter',
+            chapterN: data.payload.chapterN,
+            directive: data.payload.directive,
+          });
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Failed to resolve approval';
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === cardId && m.kind === 'book-approval'
+              ? { ...m, status: 'error' as const, errorMessage: msg }
+              : m
+          )
+        );
+      }
+    },
+    [runBookDraftFlow]
+  );
 
   /**
    * Wide Research mode (9D). Calls existing /api/ai/research SSE; pushes
@@ -2193,7 +2843,7 @@ export default function AIChatPage() {
       return;
     }
     if (forceMode === 'book') {
-      await runBookFlow(trimmed);
+      await runBookPlanner(trimmed);
       return;
     }
     if (forceMode === 'visualization') {
@@ -2216,7 +2866,7 @@ export default function AIChatPage() {
           return;
         }
         if (result.intent === 'book' && result.confidence > 0.6) {
-          await runBookFlow(trimmed);
+          await runBookPlanner(trimmed);
           return;
         }
       } catch {
@@ -2225,7 +2875,7 @@ export default function AIChatPage() {
     }
 
     runCodeFlow(trimmed);
-  }, [loading, forceMode, messages.length, runCodeFlow, runComputerFlow, runDeckFlow, runBookFlow]);
+  }, [loading, forceMode, messages.length, runCodeFlow, runComputerFlow, runDeckFlow, runBookFlow, runBookPlanner]);
 
   useEffect(() => {
     if (initialPromptRef.current) return;
@@ -2325,7 +2975,8 @@ export default function AIChatPage() {
   const hasArtifact =
     workspace.files.size > 0 ||
     hasNonMediaComputerActivity ||
-    activeSheets.length > 0;
+    activeSheets.length > 0 ||
+    activeBookId !== null;
   const artifactOpen = hasArtifact && !panelDismissed;
 
   return (
@@ -2662,6 +3313,132 @@ export default function AIChatPage() {
                       </div>
                     );
                   }
+                  if (msg.kind === 'book-plan') {
+                    const answered = msg.status === 'answered';
+                    const isAsk = msg.strategy === 'ask';
+                    return (
+                      <div key={msg.id} className="animate-fade-slide-up my-3">
+                        <div className="rounded-lg border border-edge dark:border-[#2A2A2A] bg-white dark:bg-[#141414] overflow-hidden max-w-2xl">
+                          <div className="px-4 py-3 flex items-start gap-3">
+                            <div className="flex-shrink-0 w-6 h-6 rounded-full bg-brand-orange-soft dark:bg-brand-orange/15 flex items-center justify-center">
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" className="text-brand-orange">
+                                <polyline points="20 6 9 17 4 12" />
+                              </svg>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-[11px] uppercase tracking-wide text-ink-tertiary dark:text-[#888] mb-1">
+                                Mr8's plan · {planStrategyLabel(msg.strategy)}
+                              </div>
+                              <div className="text-[14px] text-ink dark:text-[#E8E8E8] leading-relaxed">
+                                {msg.rationale}
+                              </div>
+                            </div>
+                          </div>
+                          {!answered && (
+                            <div className="flex flex-wrap gap-2 px-4 py-3 border-t border-edge dark:border-[#2A2A2A] bg-surface-secondary dark:bg-[#0F0F0F]">
+                              {isAsk && msg.questions && msg.questions.length > 0 ? (
+                                // Ask strategy — render the questions as the answer surface.
+                                <div className="flex flex-col gap-2 w-full">
+                                  <div className="text-[11px] text-ink-tertiary dark:text-[#888] mb-1">
+                                    Tap a question to answer (or type a fuller reply).
+                                  </div>
+                                  {msg.questions.map((q, i) => (
+                                    <AskQuestionRow
+                                      key={i}
+                                      question={q}
+                                      onAnswer={(ans) => handleBookPlanAnswer(msg.id, msg.prompt, ans)}
+                                    />
+                                  ))}
+                                </div>
+                              ) : (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleBookPlanContinue(msg.id, msg.prompt)}
+                                    className="text-[12px] font-medium bg-brand-orange hover:bg-brand-orange-hover text-white px-3 py-1.5 rounded transition-colors"
+                                  >
+                                    Sounds good →
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleBookPlanContinue(msg.id, msg.prompt, true)}
+                                    className="text-[12px] font-medium border border-edge dark:border-[#2A2A2A] text-ink-secondary dark:text-[#A0A0A0] hover:bg-surface-tertiary dark:hover:bg-[#1A1A1A] px-3 py-1.5 rounded transition-colors"
+                                  >
+                                    Outline first, I want to tweak
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  }
+                  if (msg.kind === 'book-approval') {
+                    const disabled = msg.status === 'resolving' || msg.status === 'resolved';
+                    return (
+                      <div key={msg.id} className="animate-fade-slide-up my-3 max-w-2xl">
+                        <div className={`rounded-lg border ${msg.status === 'resolved' ? 'border-emerald-500/40' : 'border-brand-orange/40'} bg-white dark:bg-[#141414] overflow-hidden`}>
+                          <div className="px-4 py-3 flex items-start gap-3">
+                            <div className="flex-shrink-0 w-6 h-6 rounded-full bg-brand-orange-soft dark:bg-brand-orange/15 flex items-center justify-center">
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" className="text-brand-orange">
+                                <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+                              </svg>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-[11px] uppercase tracking-wide text-ink-tertiary dark:text-[#888] mb-1">
+                                Approval · {msg.gate}
+                              </div>
+                              <div className="text-[14px] text-ink dark:text-[#E8E8E8] leading-relaxed">
+                                {msg.prompt}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap gap-2 px-4 py-3 border-t border-edge dark:border-[#2A2A2A] bg-surface-secondary dark:bg-[#0F0F0F]">
+                            {msg.options.map((opt, i) => (
+                              <button
+                                key={i}
+                                type="button"
+                                disabled={disabled}
+                                onClick={() => handleBookApproval(msg.id, msg.bookId, msg.approvalId, opt)}
+                                className={`text-[12px] font-medium px-3 py-1.5 rounded transition-colors ${
+                                  i === 0
+                                    ? 'bg-brand-orange hover:bg-brand-orange-hover text-white disabled:opacity-50'
+                                    : 'border border-edge dark:border-[#2A2A2A] text-ink-secondary dark:text-[#A0A0A0] hover:bg-surface-tertiary dark:hover:bg-[#1A1A1A] disabled:opacity-50'
+                                }`}
+                              >
+                                {msg.status === 'resolving' && i === 0 ? 'Resolving…' : opt}
+                              </button>
+                            ))}
+                          </div>
+                          {msg.status === 'error' && msg.errorMessage && (
+                            <div className="px-4 py-2 text-[11px] text-red-500 border-t border-edge dark:border-[#2A2A2A]">
+                              {msg.errorMessage}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  }
+                  if (msg.kind === 'cover-picker') {
+                    return (
+                      <CoverPickerCard
+                        key={msg.id}
+                        title={msg.bookTitle}
+                        author={msg.author}
+                        cells={msg.cells}
+                        selectedIdx={msg.selectedIdx}
+                        regeneratingIdx={msg.regeneratingIdx}
+                        onSelect={(idx) => handleCoverSelect(msg.bookId, idx)}
+                        onRegenerate={(idx) =>
+                          runBookCoverFlow(msg.bookId, msg.bookTitle, {
+                            regenerateIdx: idx,
+                            author: msg.author,
+                          })
+                        }
+                      />
+                    );
+                  }
                   if (msg.kind === 'book-outline') {
                     return (
                       <div key={msg.id} className="animate-fade-slide-up my-3">
@@ -2703,6 +3480,17 @@ export default function AIChatPage() {
                               </li>
                             ))}
                           </ol>
+                          {!msg.coversStarted && (
+                            <div className="flex justify-end gap-2 px-4 py-3 border-t border-edge dark:border-[#2A2A2A] bg-surface-secondary dark:bg-[#0F0F0F]">
+                              <button
+                                type="button"
+                                onClick={() => runBookCoverFlow(msg.bookId, msg.title)}
+                                className="text-[12px] font-medium bg-brand-orange hover:bg-brand-orange-hover text-white px-3 py-1.5 rounded transition-colors"
+                              >
+                                Design covers →
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </div>
                     );
@@ -2969,40 +3757,22 @@ export default function AIChatPage() {
         </div>
 
         {artifactOpen && (
-          <div
-            className="flex-1 flex flex-col min-w-0 bg-white dark:bg-[#0A0A0A] animate-fade-slide-up"
-            style={{ animationDuration: '300ms' }}
-          >
-            <div className="flex items-center gap-1 px-3 py-2 border-b border-edge dark:border-[#1A1A1A] flex-shrink-0">
-              {workspace.files.size > 0 && (
-                <>
-                  <button
-                    onClick={() => setRightTab('code')}
-                    className={`px-3 py-1 text-sm rounded transition-colors ${
-                      rightTab === 'code'
-                        ? 'text-brand-orange bg-surface-tertiary dark:bg-[#1A1A1A] font-semibold'
-                        : 'text-ink-tertiary dark:text-[#666] hover:text-ink-secondary dark:hover:text-[#A0A0A0]'
-                    }`}
-                  >
-                    Code
-                  </button>
-                  <button
-                    onClick={() => setRightTab('preview')}
-                    className={`px-3 py-1 text-sm rounded transition-colors ${
-                      rightTab === 'preview'
-                        ? 'text-brand-orange bg-surface-tertiary dark:bg-[#1A1A1A] font-semibold'
-                        : 'text-ink-tertiary dark:text-[#666] hover:text-ink-secondary dark:hover:text-[#A0A0A0]'
-                    }`}
-                  >
-                    Preview
-                  </button>
-                </>
-              )}
-              {computerCtx.state.timeline.length > 0 && (
+          <ArtifactPanel
+            activeTab={rightTab}
+            onTabChange={(t) => setRightTab(t as typeof rightTab)}
+            onClose={() => setPanelDismissed(true)}
+            tabs={[
+              { id: 'code', label: 'Code', visible: workspace.files.size > 0 },
+              { id: 'preview', label: 'Preview', visible: workspace.files.size > 0 },
+              { id: 'sheet', label: 'Sheet', visible: activeSheets.length > 0, pulse: sheetStreaming, title: 'Spreadsheet' },
+              { id: 'book', label: 'Book', visible: activeBookId !== null, title: 'Book Studio' },
+            ]}
+            extraHeaderButtons={
+              computerCtx.state.timeline.length > 0 && (
                 <button
+                  type="button"
                   onClick={() => {
-                    const last =
-                      computerCtx.state.timeline[computerCtx.state.timeline.length - 1];
+                    const last = computerCtx.state.timeline[computerCtx.state.timeline.length - 1];
                     computerModal.openModal(last?.id);
                   }}
                   className="px-3 py-1 text-sm rounded transition-colors flex items-center gap-1.5 text-[#B37600] dark:text-[#FFB229] hover:bg-surface-tertiary dark:hover:bg-[#1A1A1A]"
@@ -3017,69 +3787,50 @@ export default function AIChatPage() {
                   />
                   Mr8's Computer
                 </button>
-              )}
-              {activeSheets.length > 0 && (
-                <button
-                  onClick={() => setRightTab('sheet')}
-                  className={`px-3 py-1 text-sm rounded transition-colors flex items-center gap-1.5 ${
-                    rightTab === 'sheet'
-                      ? 'text-brand-orange bg-surface-tertiary dark:bg-[#1A1A1A] font-semibold'
-                      : 'text-ink-tertiary dark:text-[#666] hover:text-ink-secondary dark:hover:text-[#A0A0A0]'
-                  }`}
-                  title="Spreadsheet"
-                >
-                  {sheetStreaming && <span className="w-1.5 h-1.5 rounded-full bg-brand-orange animate-pulse" />}
-                  Sheet
-                </button>
-              )}
-              <button
-                onClick={() => setPanelDismissed(true)}
-                className="ml-auto p-1 rounded text-ink-tertiary dark:text-[#666] hover:text-ink dark:hover:text-[#E8E8E8] hover:bg-surface-tertiary dark:hover:bg-[#1A1A1A] transition-colors"
-                title="Close panel"
-                aria-label="Close artifact panel"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M18 6L6 18M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-
-            <div className="flex-1 min-h-0">
-              {rightTab === 'code' ? (
-                <WorkspacePanel
-                  workspace={workspace}
-                  recentFiles={recentFiles}
-                  terminalLogs={terminalLogs}
-                />
-              ) : rightTab === 'sheet' ? (
-                <SpreadsheetViewer
-                  sheets={activeSheets}
-                  title={activeSheetTitle}
-                  streaming={sheetStreaming}
-                />
-              ) : (
-                <PreviewPanel
-                  files={workspace.files}
-                  isGenerating={loading}
-                  fallbackHtml={workspace.previewHtml}
-                  projectName={projectName}
-                  onAddAiChat={injectAiChatWidget}
-                  onSaveEdits={(edits, hint) => {
-                    const prompt = [
-                      'The user edited the live preview and wants these changes persisted to source.',
-                      `Target element: ${hint}`,
-                      '',
-                      'Edit list (apply in order):',
-                      ...edits.map((e, i) => `${i + 1}. ${JSON.stringify(e)}`),
-                      '',
-                      'Find the matching component in src/ and patch it via write_file so the edits survive a refresh. Then call verify_build.',
-                    ].join('\n');
-                    runCodeFlow(prompt, { skipUserMessage: true, displayTitle: 'Save live edits to source' });
-                  }}
-                />
-              )}
-            </div>
-          </div>
+              )
+            }
+          >
+            {rightTab === 'code' ? (
+              <WorkspacePanel
+                workspace={workspace}
+                recentFiles={recentFiles}
+                terminalLogs={terminalLogs}
+              />
+            ) : rightTab === 'sheet' ? (
+              <SpreadsheetViewer
+                sheets={activeSheets}
+                title={activeSheetTitle}
+                streaming={sheetStreaming}
+              />
+            ) : rightTab === 'book' && activeBookId ? (
+              <BookStudioPanel
+                bookId={activeBookId}
+                liveMode={bookLiveMode}
+                liveReaderRef={liveReaderRef}
+                refreshTick={bookRefreshTick}
+              />
+            ) : (
+              <PreviewPanel
+                files={workspace.files}
+                isGenerating={loading}
+                fallbackHtml={workspace.previewHtml}
+                projectName={projectName}
+                onAddAiChat={injectAiChatWidget}
+                onSaveEdits={(edits, hint) => {
+                  const prompt = [
+                    'The user edited the live preview and wants these changes persisted to source.',
+                    `Target element: ${hint}`,
+                    '',
+                    'Edit list (apply in order):',
+                    ...edits.map((e, i) => `${i + 1}. ${JSON.stringify(e)}`),
+                    '',
+                    'Find the matching component in src/ and patch it via write_file so the edits survive a refresh. Then call verify_build.',
+                  ].join('\n');
+                  runCodeFlow(prompt, { skipUserMessage: true, displayTitle: 'Save live edits to source' });
+                }}
+              />
+            )}
+          </ArtifactPanel>
         )}
       </div>
 
