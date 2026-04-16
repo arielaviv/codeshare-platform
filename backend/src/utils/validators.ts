@@ -197,6 +197,28 @@ export const generateBookSchema = z.object({
   sessionId: z.string().optional(),
 });
 
+export const generateBookCoverSchema = z.object({
+  bookId: z
+    .string()
+    .min(1, 'bookId is required')
+    .max(64, 'bookId too long'),
+  regenerateIdx: z
+    .number()
+    .int()
+    .min(1)
+    .max(12)
+    .optional(),
+  author: z
+    .string()
+    .max(120, 'Author name too long')
+    .optional(),
+  sessionId: z.string().optional(),
+});
+
+export const selectCoverSchema = z.object({
+  selectedCoverIdx: z.number().int().min(1).max(12),
+});
+
 export const classifyIntentSchema = z.object({
   prompt: z
     .string()
@@ -227,4 +249,6 @@ export type UpdateDeckInput = z.infer<typeof updateDeckSchema>;
 export type GenerateDeckInput = z.infer<typeof generateDeckSchema>;
 export type ClassifyIntentInput = z.infer<typeof classifyIntentSchema>;
 export type GenerateBookInput = z.infer<typeof generateBookSchema>;
+export type GenerateBookCoverInput = z.infer<typeof generateBookCoverSchema>;
+export type SelectCoverInput = z.infer<typeof selectCoverSchema>;
 export type AcceptDeliveryInput = z.infer<typeof acceptDeliverySchema>;

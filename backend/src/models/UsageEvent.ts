@@ -10,7 +10,8 @@ export type UsageFeature =
   | 'plan-proposal'
   | 'feature-upsell'
   | 'delivery-verify'
-  | 'book-outline';
+  | 'book-outline'
+  | 'book-cover';
 
 export interface IUsageEvent extends Document {
   _id: mongoose.Types.ObjectId;
@@ -52,6 +53,7 @@ const usageEventSchema = new Schema<IUsageEvent>(
         'feature-upsell',
         'delivery-verify',
         'book-outline',
+        'book-cover',
       ],
     },
     modelName: {
