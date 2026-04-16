@@ -2,6 +2,7 @@ import cron, { type ScheduledTask as CronJob } from 'node-cron';
 import mongoose from 'mongoose';
 import { ScheduledTask, type IScheduledTask } from '../models/ScheduledTask';
 import { ChatSession } from '../models/ChatSession';
+import { runHeadlessAgent } from './headless-agent.service';
 
 /**
  * In-memory map of scheduled-task-id → node-cron job. We re-register on
@@ -68,34 +69,51 @@ export function unregisterTask(taskId: string): void {
 }
 
 /**
- * Fires a task: creates a fresh ChatSession with unread badge so the user
- * sees it next time they open the sidebar Recent popover. The actual
- * agent run is left to the user clicking into the session — agent runs
- * are tied to live SSE connections and don't make sense to run
- * server-side without a client. We persist the prompt as the first
- * message; the user can open the session and resume.
- *
- * Future iteration: spawn an actual headless agent run server-side and
- * persist the transcript so the user opens a completed session. Out of
- * scope for v1.
+ * Fires a task: creates a fresh ChatSession and then runs the agent
+ * headlessly so the transcript is already populated by the time the user
+ * opens it from the sidebar popover. Mode dispatch lives in
+ * `headless-agent.service`.
  */
 async function runScheduledTask(taskId: mongoose.Types.ObjectId): Promise<void> {
   const task = await ScheduledTask.findById(taskId);
   if (!task || !task.enabled) return;
 
-  // Create a new ChatSession with unreadCount: 1 (badge in the popover).
   const session = await ChatSession.create({
     userId: task.userId,
     title: task.title,
     titleStatus: 'named', // we already know the title from the task
-    skill: task.mode === 'auto' ? 'mixed' : (task.mode === 'code' ? 'apps' : task.mode === 'deck' ? 'slides' : task.mode === 'sheet' ? 'sheet' : task.mode === 'design' ? 'design' : 'mixed'),
+    skill:
+      task.mode === 'auto'
+        ? 'mixed'
+        : task.mode === 'code'
+          ? 'apps'
+          : task.mode === 'deck'
+            ? 'slides'
+            : task.mode === 'sheet'
+              ? 'sheet'
+              : task.mode === 'design'
+                ? 'design'
+                : 'mixed',
     firstUserMessage: task.prompt,
-    messageCount: 1,
-    unreadCount: 1,
+    messageCount: 0,
+    unreadCount: 0,
+    messages: [],
   });
 
   task.lastRunAt = new Date();
   task.lastRunSessionId = session._id;
   task.runCount += 1;
   await task.save();
+
+  try {
+    await runHeadlessAgent({
+      sessionId: session._id,
+      userId: task.userId,
+      mode: task.mode,
+      prompt: task.prompt,
+      taskTitle: task.title,
+    });
+  } catch (err) {
+    console.error(`[scheduler] headless run failed for task ${taskId}`, err);
+  }
 }

@@ -3,7 +3,7 @@ import type { Tool } from '@anthropic-ai/sdk/resources/messages';
 import mongoose from 'mongoose';
 import { UsageEvent } from '../models/UsageEvent';
 
-export type UserIntent = 'deck' | 'code-app' | 'code-explain' | 'computer';
+export type UserIntent = 'deck' | 'code-app' | 'code-explain' | 'computer' | 'book';
 
 export interface ClassifyResult {
   intent: UserIntent;
@@ -22,9 +22,9 @@ const classifyTool: Tool = {
     properties: {
       intent: {
         type: 'string',
-        enum: ['deck', 'code-app', 'code-explain', 'computer'],
+        enum: ['deck', 'code-app', 'code-explain', 'computer', 'book'],
         description:
-          "'deck' = slide deck/presentation. 'code-app' = application built (HTML/React/etc). 'code-explain' = existing code explained. 'computer' = user explicitly wants browser + Python sandbox automation (e.g. 'browse the web for…', 'scrape this page', 'run python to…').",
+          "'deck' = slide deck/presentation. 'code-app' = application built (HTML/React/etc). 'code-explain' = existing code explained. 'computer' = user explicitly wants browser + Python sandbox automation (e.g. 'browse the web for…', 'scrape this page', 'run python to…'). 'book' = user wants a full book/novel/novella/non-fiction manuscript drafted (e.g. 'write a book about X', 'draft a short novel', 'write me a 30-page guide to Y').",
       },
       confidence: {
         type: 'number',
@@ -43,12 +43,13 @@ const classifyTool: Tool = {
   },
 };
 
-const SYSTEM_PROMPT = `You classify user prompts into one of four intents for the Mr8 platform:
+const SYSTEM_PROMPT = `You classify user prompts into one of five intents for the Mr8 platform:
 
 - "deck"          → user wants a slide deck / presentation / pitch / report
 - "code-app"      → user wants an app / website / component built
 - "code-explain"  → user wants existing code explained or analyzed
 - "computer"      → user explicitly wants to use a browser + Python sandbox (e.g. "browse the web for…", "scrape this site", "run python to…", "open this URL and click X")
+- "book"          → user wants a multi-chapter book / novel / novella / non-fiction manuscript drafted. Signals: "write a book", "draft a novel", "write me a novella about", "a children's book about", "a non-fiction guide to", "a 30-page book on", explicit chapter/word-count asks for prose that is clearly a book rather than a single article or deck.
 
 Always call the record_intent tool. If ambiguous, default to the most useful interpretation and report lower confidence.
 

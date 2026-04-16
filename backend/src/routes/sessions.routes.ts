@@ -92,6 +92,7 @@ router.get('/:id', authenticate, async (req: Request, res: Response) => {
     firstUserMessage: session.firstUserMessage,
     messageCount: session.messageCount,
     unreadCount: session.unreadCount,
+    messages: Array.isArray(session.messages) ? session.messages : [],
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
   });
@@ -101,6 +102,7 @@ const patchSchema = z.object({
   title: z.string().min(1).max(200).optional(),
   unreadCount: z.number().int().min(0).optional(),
   closedAt: z.coerce.date().optional(),
+  messages: z.array(z.record(z.unknown())).max(2000).optional(),
 });
 
 /** PATCH /api/sessions/:id — title rename, mark read, close. */
@@ -124,6 +126,10 @@ router.patch('/:id', authenticate, async (req: Request, res: Response) => {
   }
   if (parsed.data.unreadCount !== undefined) update.unreadCount = parsed.data.unreadCount;
   if (parsed.data.closedAt !== undefined) update.closedAt = parsed.data.closedAt;
+  if (parsed.data.messages !== undefined) {
+    update.messages = parsed.data.messages;
+    update.messageCount = parsed.data.messages.length;
+  }
 
   const session = await ChatSession.findOneAndUpdate(
     { _id: req.params.id, userId },

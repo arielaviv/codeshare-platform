@@ -13,7 +13,8 @@ export type ForceMode =
   | 'audio'        // ElevenLabs TTS
   | 'chat'         // No-tools Q&A
   | 'deck'         // Slide deck
-  | 'design';      // OpenAI gpt-image-1
+  | 'design'       // OpenAI gpt-image-1
+  | 'book';        // Mr8 Book — AI-drafted multi-chapter book
 
 export const MODE_LABELS: Record<ForceMode, string> = {
   auto: 'Auto',
@@ -27,4 +28,5 @@ export const MODE_LABELS: Record<ForceMode, string> = {
   chat: 'Chat mode',
   deck: 'Slide deck',
   design: 'Design',
+  book: 'Write a book',
 };

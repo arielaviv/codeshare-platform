@@ -1,5 +1,6 @@
 import type { ChatMessage, AgentSSEHandlers } from '../types';
 import { getApiBase } from '../lib/apiBase';
+import { VERIFY_EVENTS } from '../types/verify-events.const';
 
 const API_URL = getApiBase();
 
@@ -47,7 +48,20 @@ export function streamAgent(
     }
 
     if (!response.ok || !response.body) {
-      handlers.onError('Agent request failed');
+      let body = '';
+      try {
+        body = await response.text();
+      } catch {
+        // ignore
+      }
+      let parsed: { message?: string } = {};
+      try {
+        parsed = JSON.parse(body) as { message?: string };
+      } catch {
+        // not json
+      }
+      const detail = parsed.message || body.slice(0, 200) || 'no body';
+      handlers.onError(`Agent request failed (${response.status}): ${detail}`);
       handlers.onDone([]);
       return;
     }
@@ -90,10 +104,10 @@ export function streamAgent(
                 handlers.onFileDelete(parsed.path);
                 break;
               case 'tool_call':
-                handlers.onToolCall(parsed.name, parsed.input || {});
+                handlers.onToolCall(parsed.name, parsed.input || {}, parsed.toolCallId);
                 break;
               case 'tool_result':
-                handlers.onToolResult(parsed.name, parsed.preview || '');
+                handlers.onToolResult(parsed.name, parsed.preview || '', parsed.toolCallId);
                 break;
               case 'prize_awarded':
                 handlers.onPrizeAwarded?.({
@@ -132,12 +146,14 @@ export function streamAgent(
                 break;
               case 'media_generating':
                 handlers.onMediaGenerating?.({
+                  toolCallId: parsed.toolCallId,
                   prompt: parsed.prompt,
                   model: parsed.model,
                 });
                 break;
               case 'media_ready':
                 handlers.onMediaReady?.({
+                  toolCallId: parsed.toolCallId,
                   imageUrl: parsed.imageUrl,
                   path: parsed.path,
                   width: parsed.width,
@@ -149,6 +165,43 @@ export function streamAgent(
               case 'follow_ups_proposed':
                 handlers.onFollowUpsProposed?.({
                   suggestions: parsed.suggestions || [],
+                });
+                break;
+              case 'images_fetched':
+                handlers.onImagesFetched?.({
+                  toolCallId: parsed.toolCallId,
+                  query: parsed.query,
+                  orientation: parsed.orientation,
+                  images: parsed.images || [],
+                });
+                break;
+              case VERIFY_EVENTS.STARTED:
+                handlers.onVerifyStarted?.({
+                  toolCallId: parsed.toolCallId,
+                  fileCount: parsed.fileCount,
+                  port: parsed.port,
+                });
+                break;
+              case VERIFY_EVENTS.INSTALL_LOG:
+                handlers.onVerifyInstallLog?.({
+                  toolCallId: parsed.toolCallId,
+                  exitCode: parsed.exitCode,
+                  tail: parsed.tail,
+                });
+                break;
+              case VERIFY_EVENTS.SCREENSHOT:
+                handlers.onVerifyScreenshot?.({
+                  toolCallId: parsed.toolCallId,
+                  imageUrl: parsed.imageUrl,
+                });
+                break;
+              case VERIFY_EVENTS.DONE:
+                handlers.onVerifyDone?.({
+                  toolCallId: parsed.toolCallId,
+                  matches: Boolean(parsed.matches),
+                  issues: parsed.issues || [],
+                  summary: parsed.summary || '',
+                  screenshotUrl: parsed.screenshotUrl,
                 });
                 break;
               case 'error':

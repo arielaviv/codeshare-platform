@@ -1,3 +1,5 @@
+// Load .env FIRST — must run before any module that reads process.env at import-time.
+import './config/env';
 import express, { Application } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -23,6 +25,9 @@ import sessionsRoutes from './routes/sessions.routes';
 import usageRoutes from './routes/usage.routes';
 import spreadsheetRoutes from './routes/spreadsheet.routes';
 import scheduledTasksRoutes from './routes/scheduled-tasks.routes';
+import voicesRoutes from './routes/voices.routes';
+import computeRoutes from './routes/compute.routes';
+import appChatProxyRoutes from './routes/app-chat-proxy.routes';
 import { bootstrapScheduler } from './services/scheduler.service';
 
 dotenv.config({ path: path.join(__dirname, '../.env') });
@@ -85,6 +90,9 @@ app.use('/api/sessions', sessionsRoutes);
 app.use('/api/usage', usageRoutes);
 app.use('/api/spreadsheets', spreadsheetRoutes);
 app.use('/api/scheduled-tasks', scheduledTasksRoutes);
+app.use('/api/voices', voicesRoutes);
+app.use('/api/compute', computeRoutes);
+app.use('/api/app-chat', appChatProxyRoutes);
 
 // Error handling middleware
 app.use(errorHandler);

@@ -8,6 +8,7 @@ import {
   intentClassifyRateLimiter,
   computerRateLimiter,
   researchRateLimiter,
+  bookGenerationRateLimiter,
 } from '../middleware/rateLimit.middleware';
 import { getCodeExplanation } from '../services/ai.service';
 import { chatWithTools } from '../services/ai-chat.service';
@@ -23,8 +24,11 @@ import type { ChartKind } from '../services/visualization.generation.service';
 import { classifyIntent } from '../services/intent-classifier.service';
 import { runComputerAgent } from '../services/computer-agent.service';
 import { createComputerSSEWriter } from '../services/computer/sse-writer';
+import type { ComputerSSEWriter } from '../services/computer/sse-writer';
 import { runResearchAgent } from '../services/research/research-agent.service';
-import { generateDeckSchema, classifyIntentSchema, acceptDeliverySchema } from '../utils/validators';
+import { generateDeckSchema, classifyIntentSchema, acceptDeliverySchema, generateBookSchema } from '../utils/validators';
+import { generateBook } from '../services/book-agent.service';
+import type { BookAgentSSEWriter } from '../services/book-agent.service';
 import { ApiError } from '../middleware/error.middleware';
 import type { ChatMessage, AgentRequest } from '../types/chat';
 import { debitForFeature } from '../services/wallet.service';
@@ -323,8 +327,52 @@ router.post(
         },
       };
 
+      // Part 3: inline browser research (opt-out via skipResearch).
+      // Research events get prefixed with `research_` on the wire so
+      // the existing deck client keeps working; new clients route them
+      // into the Mr8 Computer timeline.
+      let researchBrief = validation.data.researchBrief;
+      const anthropicKey = process.env.ANTHROPIC_API_KEY;
+      const e2bKey = process.env.E2B_API_KEY;
+      const shouldResearch =
+        !validation.data.skipResearch &&
+        !researchBrief &&
+        Boolean(anthropicKey) &&
+        Boolean(e2bKey);
+
+      if (shouldResearch) {
+        writer.send('deck_phase', { phase: 'researching' });
+        const researchAdapter = {
+          send(event: string, data: unknown) {
+            if (closed) return;
+            res.write(`event: research_${event}\ndata: ${JSON.stringify(data)}\n\n`);
+          },
+          end() {
+            /* don't close — the deck stream continues */
+          },
+        } as unknown as ComputerSSEWriter;
+        try {
+          const brief = await runResearchAgent(validation.data.topic, {
+            userId: req.user!._id.toString(),
+            sse: researchAdapter,
+            apiKey: anthropicKey!,
+          });
+          researchBrief = brief;
+          writer.send('research_brief_ready', brief);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          writer.send('research_failed', { message });
+          // Keep going — slides can still be generated without research.
+        }
+        writer.send('deck_phase', { phase: 'drafting' });
+      }
+
       await generateDeck(
-        { ...validation.data, userId: req.user!._id },
+        {
+          ...validation.data,
+          researchBrief,
+          userId: req.user!._id,
+        },
         writer
       );
     } catch (error) {
@@ -677,7 +725,18 @@ router.post(
         },
       };
 
-      await generateSpreadsheet({ topic, sheetCount, style, sessionId }, req.user._id, writer);
+      try {
+        await generateSpreadsheet({ topic, sheetCount, style, sessionId }, req.user._id, writer);
+      } catch (innerErr) {
+        // Headers already flushed — surface the failure via SSE, never via
+        // next(err) which would try to set headers again.
+        const message = innerErr instanceof Error ? innerErr.message : String(innerErr);
+        try {
+          writer.send('error', { message: `Spreadsheet generation crashed: ${message}` });
+          writer.end();
+        } catch { /* socket already closed */ }
+        console.error('[spreadsheet] crashed after headers flushed', innerErr);
+      }
     } catch (err) {
       next(err);
     }
@@ -694,11 +753,14 @@ router.post(
   aiRateLimiter,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { prompt, scriptText, voiceId, sessionId } = (req.body ?? {}) as {
+      const { prompt, scriptText, voiceId, sessionId, kind, sfxDurationSec, musicLengthMs } = (req.body ?? {}) as {
         prompt?: string;
         scriptText?: string;
         voiceId?: string;
         sessionId?: string;
+        kind?: 'tts' | 'sfx' | 'music';
+        sfxDurationSec?: number;
+        musicLengthMs?: number;
       };
       if (!prompt || prompt.trim().length === 0) {
         res.status(400).json({ message: 'prompt is required' });
@@ -723,7 +785,24 @@ router.post(
         },
       };
 
-      await generateAudio({ prompt, scriptText, voiceId, sessionId }, req.user._id, writer);
+      // Fall back to the user's saved voice (if any) when the request
+      // didn't specify one explicitly. Best-effort — never block audio gen.
+      let effectiveVoiceId = voiceId;
+      if (!effectiveVoiceId) {
+        try {
+          const { SoulProfile } = await import('../models/SoulProfile');
+          const profile = await SoulProfile.findOne({ userId: req.user._id }).lean();
+          effectiveVoiceId = profile?.preferences?.defaultVoiceId ?? undefined;
+        } catch (lookupErr) {
+          console.warn('[audio] voice lookup failed, using default', lookupErr);
+        }
+      }
+
+      await generateAudio(
+        { prompt, scriptText, voiceId: effectiveVoiceId, sessionId, kind, sfxDurationSec, musicLengthMs },
+        req.user._id,
+        writer
+      );
     } catch (err) {
       next(err);
     }
@@ -772,6 +851,75 @@ router.post(
       await generateVideo({ prompt, durationSec, sessionId }, req.user._id, writer);
     } catch (err) {
       next(err);
+    }
+  }
+);
+
+/**
+ * Mr8 Book — generate-book SSE endpoint (outline stage for Slice 1).
+ * Streams book_started → sandbox_ready → book_created → outline_generating
+ *         → file_written → outline_ready → book_complete.
+ */
+router.post(
+  '/generate-book',
+  authenticate,
+  bookGenerationRateLimiter,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const validation = generateBookSchema.safeParse(req.body);
+      if (!validation.success) {
+        throw new ApiError(validation.error.errors[0].message, 400);
+      }
+      if (!req.user) {
+        throw new ApiError('Unauthorized', 401);
+      }
+
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders();
+
+      let closed = false;
+      req.on('close', () => { closed = true; });
+
+      const writer: BookAgentSSEWriter = {
+        send(event, data) {
+          if (closed) return;
+          res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        },
+        end() {
+          if (!closed) res.end();
+        },
+      };
+
+      try {
+        await generateBook(
+          {
+            prompt: validation.data.prompt,
+            targetWords: validation.data.targetWords,
+            sessionId: validation.data.sessionId,
+            userId: req.user._id,
+          },
+          writer
+        );
+      } catch (innerErr) {
+        const message = innerErr instanceof Error ? innerErr.message : String(innerErr);
+        try {
+          writer.send('error', { message: `Book generation crashed: ${message}` });
+          writer.end();
+        } catch { /* socket already closed */ }
+        console.error('[book] crashed after headers flushed', innerErr);
+      }
+    } catch (err) {
+      if (!res.headersSent) {
+        if (err instanceof ApiError) next(err);
+        else if (err instanceof Error) next(new ApiError(err.message, 500));
+        else next(err);
+      } else {
+        res.write(`event: error\ndata: ${JSON.stringify({ message: 'Book generation failed' })}\n\n`);
+        res.end();
+      }
     }
   }
 );

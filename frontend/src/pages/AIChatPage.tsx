@@ -5,6 +5,8 @@ import remarkGfm from 'remark-gfm';
 import confetti from 'canvas-confetti';
 import api, { intentAPI } from '../services/api';
 import { sessionsApi, type SessionSkill } from '../services/sessionsApi';
+import { computeApi } from '../services/computeApi';
+import { appChatApi } from '../services/appChatApi';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { streamAgent } from '../services/agentStream';
 import { requestResearch } from '../services/researchStream';
@@ -12,12 +14,11 @@ import { streamDeckGeneration } from '../services/deckStream';
 import PrizeModal from '../components/PrizeModal';
 import { PlanApprovalWidget } from '../components/PlanApprovalWidget';
 import type { PrizeAward } from '../types';
-import type { PlanProposedEvent, DeliveryStatusEvent } from '../types/agent-events';
+import type { PlanProposedEvent } from '../types/agent-events';
 import type { PermissionMode } from '../types/blueprint';
 import { useAuth } from '../contexts/AuthContext';
 import { useComputer } from '../contexts/ComputerContext';
 import { useComputerStream } from '../hooks/useComputerStream';
-import { ComputerPanel } from '../components/computer';
 import WorkspacePanel from '../components/WorkspacePanel';
 import PreviewPanel from '../components/PreviewPanel';
 import ToolCallCard from '../components/chat/ToolCallCard';
@@ -32,6 +33,7 @@ import SlidePreviewCard from '../components/chat/SlidePreviewCard';
 import ResearchBriefCard from '../components/chat/ResearchBriefCard';
 import AudioCard from '../components/chat/AudioCard';
 import { streamAudioGeneration } from '../services/audioStream';
+import { streamBookGeneration, type BookChapterOutline } from '../services/bookStream';
 import VideoCard from '../components/chat/VideoCard';
 import { streamVideoGeneration } from '../services/videoStream';
 import VisualizationCard from '../components/chat/VisualizationCard';
@@ -43,7 +45,11 @@ import { SAMPLE_PROMPTS } from '../data/sample-prompts';
 import type { ForceMode } from '../types/modes';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { wcManager } from '../lib/webcontainer-manager';
+import { getStaticBase } from '../lib/apiBase';
+import { useComputerModal } from '../contexts/ComputerModalContext';
 import SettingsModal from '../components/SettingsModal';
+import { Tooltip } from '../components/ui/Tooltip';
+import { PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import type { ChatMessage } from '../types';
 import type { Components } from 'react-markdown';
 
@@ -72,6 +78,8 @@ type ChatItem =
       input: unknown;
       result?: unknown;
       status: 'running' | 'done' | 'error';
+      // Populated when the agent fetches stock images via fetch_unsplash_image.
+      images?: Array<{ url: string; alt: string; author: string }>;
     }
   | {
       id: string;
@@ -117,13 +125,6 @@ type ChatItem =
       status: 'pending' | 'accepted' | 'rejected';
     }
   | {
-      // Phase 7: delivery-ready (Accept & Merge) inline in the transcript.
-      id: string;
-      kind: 'delivery-ready';
-      planEvent: PlanProposedEvent;
-      status: 'pending' | 'accepted' | 'rejected';
-    }
-  | {
       // Phase 7: charged confirmation inline — shown on wallet debit success.
       id: string;
       kind: 'charged';
@@ -158,6 +159,21 @@ type ChatItem =
       voiceName: string;
       scriptText: string;
       title?: string;
+      audioKind?: 'tts' | 'sfx' | 'music';
+    }
+  | {
+      // Mr8 Book — outline preview card pushed when outline_ready fires.
+      id: string;
+      kind: 'book-outline';
+      bookId: string;
+      title: string;
+      genre: string;
+      tone: string;
+      pov: string;
+      themes: string[];
+      chapters: BookChapterOutline[];
+      totalEstimatedWords: number;
+      targetWords: number;
     }
   | {
       // Phase 9F: Video result card. Updated in place as Runway progresses.
@@ -181,6 +197,43 @@ type ChatItem =
       chartKind?: string;
       code?: string;
       failReason?: string;
+    }
+  | {
+      // Design mode: inline render of the generated image so the user
+      // doesn't have to open the computer modal to see it.
+      id: string;
+      kind: 'generated-image';
+      imageUrl: string;
+      prompt: string;
+      width?: number;
+      height?: number;
+    }
+  | {
+      // Clickable preview card pushed at end of an app build so the
+      // user can always re-open the preview/code tabs even after
+      // dismissing the side panel.
+      id: string;
+      kind: 'app-ready';
+      fileCount: number;
+      projectName: string;
+    }
+  | {
+      // verify_build screenshot rendered inline — shows what Mr8 saw
+      // when reviewing the build.
+      id: string;
+      kind: 'verify-screenshot';
+      imageUrl: string;
+      toolCallId?: string;
+    }
+  | {
+      // verify_build verdict — green "Everything looks great" if matches,
+      // yellow "Fixing N issues" if not.
+      id: string;
+      kind: 'verify-result';
+      matches: boolean;
+      summary: string;
+      issues: string[];
+      screenshotUrl?: string;
     };
 
 function generateId(): string {
@@ -269,9 +322,12 @@ export default function AIChatPage() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [projectName, setProjectName] = useState('');
-  const [selectedModel, setSelectedModel] = useState('claude-haiku-4-5-20251001');
+  // Default to Sonnet 4.6 — Haiku is faster/cheaper but consistently
+  // produces flatter, less visually striking apps. Users can still pick
+  // Haiku (fast) or Opus (top quality) from the model dropdown.
+  const [selectedModel, setSelectedModel] = useState('claude-sonnet-4-6');
   const [editingName, setEditingName] = useState(false);
-  const [rightTab, setRightTab] = useState<'code' | 'preview' | 'computer' | 'sheet'>('preview');
+  const [rightTab, setRightTab] = useState<'code' | 'preview' | 'sheet'>('preview');
   // Active spreadsheet artifact (Phase 4G). Streams in row-by-row.
   const [activeSheets, setActiveSheets] = useState<SheetData[]>([]);
   const [activeSheetTitle, setActiveSheetTitle] = useState<string>('');
@@ -283,6 +339,7 @@ export default function AIChatPage() {
   // X button; dismissal is reset on the next user message so a new turn can
   // surface its own artifact.
   const [panelDismissed, setPanelDismissed] = useState(false);
+  const [chatHidden, setChatHidden] = useState(false);
   const [terminalLogs, setTerminalLogs] = useState('');
   const [showSettings, setShowSettings] = useState(false);
   const [forceMode, setForceMode] = useState<ForceMode>('auto');
@@ -291,11 +348,9 @@ export default function AIChatPage() {
   const [vizPreferredCharts, setVizPreferredCharts] = useState<ChartKind[]>([]);
   const [prize, setPrize] = useState<PrizeAward | null>(null);
   const [activePlan, setActivePlan] = useState<PlanProposedEvent | null>(null);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [_deliveryStatus, setDeliveryStatus] = useState<DeliveryStatusEvent['status'] | null>(null);
-  const [acceptingDelivery, setAcceptingDelivery] = useState(false);
   const { refreshUser } = useAuth();
   const computerCtx = useComputer();
+  const computerModal = useComputerModal();
   const { start: startComputer } = useComputerStream();
 
   const workspace = useWorkspace(sessionId);
@@ -326,19 +381,181 @@ export default function AIChatPage() {
     });
   }, []);
 
-  const runCodeFlow = useCallback((trimmed: string) => {
-    if (!projectName) setProjectName(trimmed.slice(0, 50));
+  // Mirror WebContainer state into Mr8 Computer as `terminal` timeline
+  // entries so the modal shows real progress during app builds.
+  // We track the last log length per stream so we only dispatch the
+  // newly-arrived chunk, not the whole accumulated buffer every tick.
+  useEffect(() => {
+    let installSent = 0;
+    let devSent = 0;
+    let installStarted = false;
+    let devStarted = false;
+    let installEnded = false;
+    let devEnded = false;
+    const INSTALL_ID = 'wc-install';
+    const DEV_ID = 'wc-dev';
+    return wcManager.subscribe((state) => {
+      // install stream
+      if (state.status === 'installing' && !installStarted) {
+        installStarted = true;
+        computerCtx.dispatch({
+          type: 'terminal-start',
+          id: INSTALL_ID,
+          title: 'npm install',
+        });
+      }
+      if (installStarted && state.installLogs.length > installSent) {
+        const chunk = state.installLogs.slice(installSent);
+        installSent = state.installLogs.length;
+        const lines = chunk.split(/\r?\n/).filter((l) => l.length > 0);
+        if (lines.length > 0) {
+          computerCtx.dispatch({ type: 'terminal-log', id: INSTALL_ID, lines });
+        }
+      }
+      if (installStarted && !installEnded && (state.status === 'starting' || state.status === 'running' || state.status === 'error')) {
+        installEnded = true;
+        computerCtx.dispatch({
+          type: 'terminal-end',
+          id: INSTALL_ID,
+          status: state.status === 'error' ? 'error' : 'success',
+        });
+      }
+      // dev stream
+      if ((state.status === 'starting' || state.status === 'running') && !devStarted) {
+        devStarted = true;
+        computerCtx.dispatch({
+          type: 'terminal-start',
+          id: DEV_ID,
+          title: 'npm run dev',
+        });
+      }
+      if (devStarted && state.devLogs.length > devSent) {
+        const chunk = state.devLogs.slice(devSent);
+        devSent = state.devLogs.length;
+        const lines = chunk.split(/\r?\n/).filter((l) => l.length > 0);
+        if (lines.length > 0) {
+          computerCtx.dispatch({ type: 'terminal-log', id: DEV_ID, lines });
+        }
+      }
+      if (devStarted && !devEnded && state.status === 'running') {
+        devEnded = true;
+        computerCtx.dispatch({ type: 'terminal-end', id: DEV_ID, status: 'success' });
+      }
+      if (devStarted && !devEnded && state.status === 'error') {
+        devEnded = true;
+        computerCtx.dispatch({ type: 'terminal-end', id: DEV_ID, status: 'error' });
+      }
+    });
+  }, [computerCtx]);
 
-    const userMsg: ChatItem = { id: `user-${Date.now()}`, kind: 'user', content: trimmed };
-    const taskListId = `tasks-${Date.now()}`;
-    const taskList: ChatItem = {
-      id: taskListId,
-      kind: 'task-list',
-      title: trimmed.length > 60 ? `${trimmed.slice(0, 57)}…` : trimmed,
-      tasks: [],
-      status: 'running',
+  // Tracks the last transcript we successfully wrote to the server so the
+  // debounced auto-save can skip redundant PATCHes (incl. the echo right
+  // after hydration when setMessages fires with the just-loaded array).
+  const lastSavedMessagesJsonRef = useRef<string>('[]');
+
+  // Phase 9H hydration: if the URL carries ?session=<id>, pull the stored
+  // ChatItems for that session (populated by scheduled runs or prior
+  // turns) and seed the transcript so the user opens to a populated chat.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const sid = params.get('session');
+    if (!sid || serverSessionId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const detail = await sessionsApi.get(sid);
+        if (cancelled) return;
+        setServerSessionId(detail.id);
+        setSessionTitle(detail.title);
+        const hydrated = (detail.messages ?? []) as unknown as ChatItem[];
+        lastSavedMessagesJsonRef.current = JSON.stringify(hydrated);
+        if (hydrated.length > 0) {
+          setMessages(hydrated);
+        }
+        if (detail.unreadCount > 0) {
+          void sessionsApi.patch(detail.id, { unreadCount: 0 }).catch(() => undefined);
+        }
+      } catch {
+        // session missing or forbidden — silently fall back to a fresh chat
+      }
+    })();
+    return () => {
+      cancelled = true;
     };
-    setMessages((prev) => [...prev, userMsg, taskList]);
+    // Only on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Phase 9H persistence: debounce-save the transcript to the server whenever
+  // it changes so reopening the session from Recent Chats actually rehydrates
+  // with content. Guard with a last-saved snapshot to skip identical writes.
+  useEffect(() => {
+    if (!serverSessionId) return;
+    const json = JSON.stringify(messages);
+    if (json === lastSavedMessagesJsonRef.current) return;
+    const handle = window.setTimeout(() => {
+      lastSavedMessagesJsonRef.current = json;
+      void sessionsApi
+        .patch(serverSessionId, {
+          messages: messages as unknown as Array<Record<string, unknown> & { id: string; kind: string }>,
+        })
+        .catch(() => undefined);
+    }, 1500);
+    return () => window.clearTimeout(handle);
+  }, [messages, serverSessionId]);
+
+  // Always-on Mr8's Computer: keepalive heartbeat + release on unload.
+  // Keepalive only fires while the tab is focused to avoid extending TTL
+  // on abandoned background tabs.
+  useEffect(() => {
+    if (!serverSessionId) return;
+    const ping = () => {
+      if (!document.hasFocus()) return;
+      void computeApi.keepalive().catch(() => undefined);
+    };
+    const interval = window.setInterval(ping, 5 * 60 * 1000);
+    const onBeforeUnload = () => {
+      // Use fetch with keepalive: true — sendBeacon can't set the
+      // Authorization header our auth middleware requires, but
+      // `keepalive` fetch does the same fire-and-forget semantics.
+      const token = localStorage.getItem('accessToken');
+      try {
+        void fetch('/api/compute/release', {
+          method: 'POST',
+          keepalive: true,
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        });
+      } catch {
+        // best-effort — the sandbox will also self-terminate on timeout
+      }
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener('beforeunload', onBeforeUnload);
+    };
+  }, [serverSessionId]);
+
+  const runCodeFlow = useCallback(
+    (trimmed: string, opts?: { skipUserMessage?: boolean; displayTitle?: string }) => {
+      if (!projectName) setProjectName(trimmed.slice(0, 50));
+
+      const taskListId = `tasks-${Date.now()}`;
+      const displayTitle =
+        opts?.displayTitle ?? (trimmed.length > 60 ? `${trimmed.slice(0, 57)}…` : trimmed);
+      const taskList: ChatItem = {
+        id: taskListId,
+        kind: 'task-list',
+        title: displayTitle,
+        tasks: [],
+        status: 'running',
+      };
+      if (opts?.skipUserMessage) {
+        setMessages((prev) => [...prev, taskList]);
+      } else {
+        const userMsg: ChatItem = { id: `user-${Date.now()}`, kind: 'user', content: trimmed };
+        setMessages((prev) => [...prev, userMsg, taskList]);
+      }
     setInput('');
     setLoading(true);
     setRecentFiles(new Set());
@@ -373,7 +590,10 @@ export default function AIChatPage() {
       );
     };
 
-    const allMsgs = [...messages, userMsg];
+    // Always include the prompt in wire-format history, even when we
+    // suppress the visible user-message ChatItem (e.g., plan acceptance).
+    const syntheticUser: ChatItem = { id: `user-syn-${Date.now()}`, kind: 'user', content: trimmed };
+    const allMsgs = [...messages, syntheticUser];
     const history: ChatMessage[] = toApiHistory(allMsgs);
 
     abortRef.current = streamAgent(history, workspace.toRecord(), {
@@ -437,8 +657,10 @@ export default function AIChatPage() {
           ],
         }));
       },
-      onToolCall(name, input) {
-        const id = `tool-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      onToolCall(name, input, toolCallId) {
+        // Prefer the agent's real tool_use id so downstream media_* events
+        // can correlate by id instead of fragile state lookups.
+        const id = toolCallId || `tool-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
         // propose_goal / complete_goal are routed via dedicated SSE events
         // (goal_started / goal_completed); they don't render as chips.
@@ -491,12 +713,9 @@ export default function AIChatPage() {
           // Auto-launch surfaces just like before.
           if (name === 'write_file' || name === 'delete_file') {
             setPanelDismissed(false);
-            setRightTab((t) => (t === 'computer' ? 'preview' : t));
           }
-          if (isComputerTool) {
-            setPanelDismissed(false);
-            setRightTab('computer');
-          }
+          // Computer tools no longer hijack the right artifact panel —
+          // the inline ComputerActivityCard + Manus-style modal own that UX.
           return;
         }
 
@@ -524,11 +743,8 @@ export default function AIChatPage() {
         // Auto-launch the right surface for the kind of work that just started.
         if (name === 'write_file' || name === 'delete_file') {
           setPanelDismissed(false);
-          setRightTab((t) => (t === 'computer' ? 'preview' : t));
         }
         if (isComputerTool) {
-          setPanelDismissed(false);
-          setRightTab('computer');
 
           // Mirror into the task-list as a single task entry.
           const obj = (input ?? {}) as Record<string, unknown>;
@@ -578,16 +794,18 @@ export default function AIChatPage() {
         currentAssistantTextId = null;
       },
       onMediaGenerating(event) {
-        // Dispatch into ComputerContext so the inline ComputerActivityCard
-        // and the modal both pick up the in-progress state.
-        // We use the most recent generate_image computer-activity ChatItem's
-        // timelineEntryId as the entry id so frontend bridges line up.
-        const entryId = (() => {
-          const lastActivity = [...messages].reverse().find(
-            (m) => m.kind === 'computer-activity' && (m.fallbackLabel === 'Media viewer')
-          );
-          return lastActivity?.id ?? `media-${Date.now()}`;
-        })();
+        // Use the tool_use id from the backend when available — this is
+        // the same id the computer-activity ChatItem carries, so the
+        // inline card and modal update in sync. Fallback only if the
+        // backend is old and doesn't tag events.
+        const entryId =
+          event.toolCallId ??
+          (() => {
+            const lastActivity = [...messages].reverse().find(
+              (m) => m.kind === 'computer-activity' && m.fallbackLabel === 'Media viewer'
+            );
+            return lastActivity?.id ?? `media-${Date.now()}`;
+          })();
         computerCtx.dispatch({
           type: 'media-generating',
           id: entryId,
@@ -605,13 +823,64 @@ export default function AIChatPage() {
           },
         ]);
       },
+      onImagesFetched(event) {
+        // Attach the fetched images to the matching tool-call ChatItem so
+        // the card renders thumbnails instead of just the input JSON.
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.kind === 'tool-call' &&
+            m.tool === 'fetch_unsplash_image' &&
+            (event.toolCallId ? m.id === event.toolCallId : true) &&
+            !m.images
+              ? { ...m, images: event.images }
+              : m
+          )
+        );
+      },
+      onVerifyStarted() {
+        // Push an assistant-text marker so the user sees "Verifying build…"
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `asst-verify-${Date.now()}`,
+            kind: 'assistant-text',
+            content: "Verifying the build in Mr8's Computer…",
+          },
+        ]);
+      },
+      onVerifyScreenshot(event) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `verify-shot-${Date.now()}`,
+            kind: 'verify-screenshot',
+            imageUrl: event.imageUrl,
+            toolCallId: event.toolCallId,
+          },
+        ]);
+      },
+      onVerifyDone(event) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `verify-res-${Date.now()}`,
+            kind: 'verify-result',
+            matches: event.matches,
+            summary: event.summary,
+            issues: event.issues,
+            screenshotUrl: event.screenshotUrl,
+          },
+        ]);
+      },
       onMediaReady(event) {
-        const entryId = (() => {
-          const lastActivity = [...messages].reverse().find(
-            (m) => m.kind === 'computer-activity' && (m.fallbackLabel === 'Media viewer')
-          );
-          return lastActivity?.id ?? `media-${Date.now()}`;
-        })();
+        const entryId =
+          event.toolCallId ??
+          (() => {
+            const lastActivity = [...messages].reverse().find(
+              (m) => m.kind === 'computer-activity' && m.fallbackLabel === 'Media viewer'
+            );
+            return lastActivity?.id ?? `media-${Date.now()}`;
+          })();
         computerCtx.dispatch({
           type: 'media-ready',
           id: entryId,
@@ -620,6 +889,19 @@ export default function AIChatPage() {
           width: event.width,
           height: event.height,
         });
+        // Also push the generated image inline in the chat so the user
+        // sees the result immediately without having to open the modal.
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `media-inline-${Date.now()}`,
+            kind: 'generated-image',
+            imageUrl: event.imageUrl,
+            prompt: event.prompt ?? '',
+            width: event.width,
+            height: event.height,
+          },
+        ]);
       },
       onGoalCompleted(event) {
         if (!currentGoalChatId) return;
@@ -709,11 +991,7 @@ export default function AIChatPage() {
         refreshUser();
       },
       onPlanProposed(event) {
-        // Keep state for the handlers (activePlan/deliveryStatus used by
-        // acceptPlanAndBuild / acceptDelivery callbacks).
         setActivePlan(event);
-        setDeliveryStatus('scoped');
-        // Also push as inline ChatItem (Phase 7 move off sticky bar).
         setMessages((prev) => [
           ...prev,
           {
@@ -725,25 +1003,17 @@ export default function AIChatPage() {
         ]);
       },
       onDeliveryStatus(event) {
-        setDeliveryStatus(event.status);
-        if (event.status === 'verified' && activePlan) {
-          // Push delivery-ready inline. Status becomes 'accepted' after user accepts.
+        if (event.status === 'verified') {
           setMessages((prev) => {
-            // Mark previous plan-approval as accepted since we're now past scoping.
-            const withAccepted = prev.map((m) =>
+            const hasPending = prev.some(
+              (m) => m.kind === 'plan-approval' && m.status === 'pending'
+            );
+            if (!hasPending) return prev;
+            return prev.map((m) =>
               m.kind === 'plan-approval' && m.status === 'pending'
                 ? { ...m, status: 'accepted' as const }
                 : m
             );
-            return [
-              ...withAccepted,
-              {
-                id: `delivery-${event.planId || activePlan.planId}`,
-                kind: 'delivery-ready',
-                planEvent: activePlan,
-                status: 'pending',
-              },
-            ];
           });
         }
       },
@@ -787,6 +1057,24 @@ export default function AIChatPage() {
           const alreadyHas = prev[prev.length - 1]?.kind === 'task-completed' || prev[prev.length - 1]?.kind === 'follow-ups';
           if (alreadyHas) return prev;
           return [...prev, { id: `done-${Date.now()}`, kind: 'task-completed' }];
+        });
+
+        // If the build wrote files, push an app-ready preview card so
+        // the user can always re-open the preview/code even after
+        // dismissing the side panel.
+        setMessages((prev) => {
+          if (workspace.files.size === 0) return prev;
+          const already = prev.some((m) => m.kind === 'app-ready');
+          if (already) return prev;
+          return [
+            ...prev,
+            {
+              id: `app-ready-${Date.now()}`,
+              kind: 'app-ready',
+              fileCount: workspace.files.size,
+              projectName: projectName || 'Your app',
+            },
+          ];
         });
 
         // Final fallback: if the agent finished with files but never spoke,
@@ -982,16 +1270,42 @@ export default function AIChatPage() {
       { prompt: trimmed, sessionId: serverSessionId ?? undefined },
       {
         onStarted() { /* already pushed */ },
+        onKind({ kind }) {
+          // SFX/music don't have a script step — collapse the goal
+          // actions to a single "Generate sound" / "Generate music" chip.
+          if (kind === 'sfx' || kind === 'music') {
+            const label = kind === 'sfx' ? 'Generate sound effect' : 'Generate music';
+            setMessages((prev) =>
+              prev.map((m) => {
+                if (m.id !== goalId || m.kind !== 'goal') return m;
+                return {
+                  ...m,
+                  actions: [
+                    { id: 'act-tts', kind: 'image', label, status: 'running' },
+                  ],
+                };
+              })
+            );
+          }
+        },
         onScriptDrafted() {
           setActionStatus('act-script', 'done');
         },
         onTtsGenerating() { /* visual feedback only */ },
+        onSfxGenerating() { /* already labeled via onKind */ },
+        onMusicGenerating() { /* already labeled via onKind */ },
         onReady(ready) {
           setActionStatus('act-tts', 'done');
+          const summary =
+            ready.kind === 'sfx'
+              ? `Generated a ${ready.durationSec}s sound effect.`
+              : ready.kind === 'music'
+                ? `Generated ${ready.durationSec}s of music.`
+                : `Generated ${ready.durationSec}s of audio with ${ready.voiceName}.`;
           setMessages((prev) =>
             prev.map((m) =>
               m.id === goalId && m.kind === 'goal'
-                ? { ...m, status: 'done' as const, summary: `Generated ${ready.durationSec}s of audio with ${ready.voiceName}.` }
+                ? { ...m, status: 'done' as const, summary }
                 : m
             )
           );
@@ -1005,6 +1319,7 @@ export default function AIChatPage() {
               voiceName: ready.voiceName,
               scriptText: ready.scriptText,
               title: trimmed.length > 60 ? `${trimmed.slice(0, 57)}…` : trimmed,
+              audioKind: ready.kind,
             },
           ]);
           setLoading(false);
@@ -1025,6 +1340,136 @@ export default function AIChatPage() {
       }
     );
   }, [serverSessionId]);
+
+  /**
+   * Mr8 Book (Slice 1 — outline only). Calls /api/ai/generate-book SSE;
+   * pushes a goal card with "Spin up workspace" + "Draft outline" actions,
+   * dispatches editor-write into the Computer panel so outline.md shows up
+   * as a real file, and pushes an inline book-outline ChatItem when
+   * outline_ready fires.
+   */
+  const runBookFlow = useCallback(async (trimmed: string) => {
+    setInput('');
+    setLoading(true);
+
+    const userMsg: ChatItem = { id: `user-${Date.now()}`, kind: 'user', content: trimmed };
+    const intro: ChatItem = {
+      id: `asst-${Date.now() + 1}`,
+      kind: 'assistant-text',
+      content: `I'll spin up a workspace, draft a chapter outline, and drop it into a file you can read.`,
+    };
+    const goalId = `goal-book-${Date.now()}`;
+    const goalChat: ChatItem = {
+      id: goalId,
+      kind: 'goal',
+      goalId,
+      title: trimmed.length > 60 ? `${trimmed.slice(0, 57)}…` : trimmed,
+      status: 'running',
+      actions: [
+        { id: 'act-sandbox', kind: 'search', label: 'Open workspace', status: 'running' },
+        { id: 'act-outline', kind: 'write', label: 'Draft outline', status: 'running' },
+      ],
+    };
+    setMessages((prev) => [...prev, userMsg, intro, goalChat]);
+
+    const setActionStatus = (actId: string, status: 'running' | 'done' | 'error') => {
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.id !== goalId || m.kind !== 'goal') return m;
+          return {
+            ...m,
+            actions: m.actions.map((a) => (a.id === actId ? { ...a, status } : a)),
+          };
+        })
+      );
+    };
+
+    const editorEntryId = `book-editor-${Date.now()}`;
+
+    abortRef.current = streamBookGeneration(
+      { prompt: trimmed, targetWords: 2000, sessionId: serverSessionId ?? undefined },
+      {
+        onStarted() { /* already pushed */ },
+        onSandboxReady({ sandboxId }) {
+          setActionStatus('act-sandbox', 'done');
+          computerCtx.dispatch({
+            type: 'sandbox-ready',
+            id: `book-sandbox-${Date.now()}`,
+            sandboxId,
+          });
+        },
+        onBookCreated() { /* DB persisted; no UI change */ },
+        onOutlineGenerating() { /* visual feedback via running action */ },
+        onFileWritten({ path, content }) {
+          computerCtx.dispatch({
+            type: 'editor-write',
+            id: editorEntryId,
+            path,
+            content,
+          });
+          setPanelDismissed(false);
+          computerCtx.setMode('compact');
+        },
+        onOutlineReady(data) {
+          setActionStatus('act-outline', 'done');
+          setMessages((prev) => {
+            const withStatus = prev.map((m) =>
+              m.id === goalId && m.kind === 'goal'
+                ? {
+                    ...m,
+                    status: 'done' as const,
+                    summary: `Outline ready: ${data.chapters.length} chapters, ~${data.totalEstimatedWords.toLocaleString()} words.`,
+                  }
+                : m
+            );
+            return [
+              ...withStatus,
+              {
+                id: `book-outline-${Date.now()}`,
+                kind: 'book-outline' as const,
+                bookId: data.bookId,
+                title: data.title,
+                genre: data.genre,
+                tone: data.tone,
+                pov: data.pov,
+                themes: data.themes,
+                chapters: data.chapters,
+                totalEstimatedWords: data.totalEstimatedWords,
+                targetWords: data.targetWords,
+              },
+            ];
+          });
+        },
+        onSandboxWriteFailed({ message }) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `asst-warn-${Date.now()}`,
+              kind: 'assistant-text',
+              content: `(Workspace file write failed: ${message}. Outline still saved.)`,
+            },
+          ]);
+        },
+        onBookComplete() {
+          setLoading(false);
+        },
+        onError(message) {
+          setActionStatus('act-sandbox', 'error');
+          setActionStatus('act-outline', 'error');
+          setMessages((prev) => {
+            const withStatus = prev.map((m) =>
+              m.id === goalId && m.kind === 'goal' ? { ...m, status: 'error' as const } : m
+            );
+            return [
+              ...withStatus,
+              { id: `asst-err-${Date.now()}`, kind: 'assistant-text' as const, content: message },
+            ];
+          });
+          setLoading(false);
+        },
+      }
+    );
+  }, [serverSessionId, computerCtx]);
 
   /**
    * Wide Research mode (9D). Calls existing /api/ai/research SSE; pushes
@@ -1178,48 +1623,25 @@ export default function AIChatPage() {
       const { planId, pricing } = activePlan;
       const acceptanceText = `Accept the plan. id=${planId} dealerCents=${pricing.dealerCents} mode=${mode} clearContext=${clearContext}`;
       setActivePlan(null);
-      setDeliveryStatus(null);
-      runCodeFlow(acceptanceText);
+      // Mark the inline plan-approval card as accepted so it visually
+      // collapses (no longer interactive) while the build runs.
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.kind === 'plan-approval' && m.planEvent.planId === planId && m.status === 'pending'
+            ? { ...m, status: 'accepted' as const }
+            : m
+        )
+      );
+      // Send the acceptance prompt to the agent without polluting the
+      // visible transcript with a wire-format user message.
+      runCodeFlow(acceptanceText, { skipUserMessage: true, displayTitle: 'Building the plan' });
     },
     [activePlan, runCodeFlow],
   );
 
-  const acceptDelivery = useCallback(async () => {
-    if (!activePlan || acceptingDelivery) return;
-    setAcceptingDelivery(true);
-    try {
-      const { data } = await api.post<{ ok: boolean; newBalanceCents: number; priceCents: number }>(
-        '/ai/accept-delivery',
-        { planId: activePlan.planId, priceCents: activePlan.pricing.dealerCents },
-      );
-      if (data.ok) {
-        // Mutate the delivery-ready ChatItem to accepted + push a charged pill inline.
-        setMessages((prev) => {
-          const withAccepted = prev.map((m) =>
-            m.kind === 'delivery-ready' && m.status === 'pending'
-              ? { ...m, status: 'accepted' as const }
-              : m
-          );
-          return [
-            ...withAccepted,
-            {
-              id: `charged-${Date.now()}`,
-              kind: 'charged',
-              amountCents: data.priceCents,
-              newBalanceCents: data.newBalanceCents,
-            },
-          ];
-        });
-        setDeliveryStatus('delivered');
-        setActivePlan(null);
-        refreshUser();
-      }
-    } catch (err) {
-      console.error('accept-delivery failed', err);
-    } finally {
-      setAcceptingDelivery(false);
-    }
-  }, [activePlan, acceptingDelivery, refreshUser]);
+  // Accept & Merge UX removed — acceptPlanAndBuild is the commit point,
+  // wallet debit fires at plan acceptance instead. Delivery verification
+  // still runs via verify_build but no longer gates a payment step.
 
   const onSpinForDiscount = useCallback(() => {
     // W3 prize orchestrator will handle this. For now, just log.
@@ -1228,7 +1650,6 @@ export default function AIChatPage() {
 
   const onTellMr8 = useCallback(() => {
     setActivePlan(null);
-    setDeliveryStatus(null);
     textareaRef.current?.focus();
   }, []);
 
@@ -1277,6 +1698,43 @@ export default function AIChatPage() {
       },
     });
   }, [messages, workspace, selectedModel, computerCtx, startComputer]);
+
+  /**
+   * One-click "Add AI Chat" — creates a widget on the backend, then
+   * asks the agent to inject the Mr8 chat widget template into the
+   * current project with the widget id / jwt / proxy URL filled in.
+   */
+  const injectAiChatWidget = useCallback(async () => {
+    try {
+      const widget = await appChatApi.createWidget(projectName || 'app');
+      const prompt = [
+        'Add the Mr8 AI chat widget to this app.',
+        '',
+        `WIDGET_ID=${widget.widgetId}`,
+        `WIDGET_JWT=${widget.jwt}`,
+        `PROXY_URL=${widget.proxyUrl}`,
+        '',
+        'Do this:',
+        '1. Create `src/components/Mr8ChatWidget.tsx` — a self-contained',
+        '   floating chat UI that POSTs `{ jwt, messages }` to the proxy',
+        '   URL above and streams `event: delta` tokens back. Floating',
+        '   bottom-right button toggles a 380x560 chat panel. Theme via',
+        '   CSS vars (--primary, --background, --border, --card-foreground).',
+        '2. Mount <Mr8ChatWidget /> in src/App.tsx so it appears everywhere.',
+        '3. The JWT is scoped and rate-limited — safe to inline.',
+        '4. Add a tiny "Powered by Mr8" footer in the chat panel.',
+        '',
+        'Call write_file for each change and verify_build at the end.',
+      ].join('\n');
+      runCodeFlow(prompt, { skipUserMessage: true, displayTitle: 'Add AI Chat to this app' });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setMessages((prev) => [
+        ...prev,
+        { id: `asst-err-${Date.now()}`, kind: 'assistant-text', content: `Couldn't add AI chat: ${msg}` },
+      ]);
+    }
+  }, [projectName, runCodeFlow]);
 
   /**
    * Inline deck flow — Manus-style. Pushes user msg, an assistant intro,
@@ -1401,6 +1859,47 @@ export default function AIChatPage() {
       {
         onStarted() {
           // already pushed
+        },
+        onPhase(phase) {
+          setMessages((prev) =>
+            prev.map((m) => {
+              if (m.id !== genCardId || m.kind !== 'tool-call') return m;
+              const r = (m.result ?? {}) as Record<string, unknown>;
+              return { ...m, result: { ...r, phase } };
+            })
+          );
+        },
+        onResearchBrowserStart(data) {
+          const id = `deck-research-${data.executionId ?? Date.now()}`;
+          computerCtx.dispatch({
+            type: 'browser-start',
+            id,
+            streamUrl: data.streamUrl ?? '',
+          });
+        },
+        onResearchBrowserAction(data) {
+          const id = `deck-research-${data.executionId ?? 'current'}`;
+          computerCtx.dispatch({
+            type: 'browser-action',
+            id,
+            action: data.action ?? '',
+            target: data.target ?? '',
+            url: data.url,
+            title: data.title,
+          });
+        },
+        onResearchBrowserEnd(data) {
+          const id = `deck-research-${data.executionId ?? 'current'}`;
+          computerCtx.dispatch({ type: 'browser-end', id });
+        },
+        onResearchBriefReady(brief) {
+          setMessages((prev) => [
+            ...prev,
+            { id: `research-brief-${Date.now()}`, kind: 'research-brief', brief },
+          ]);
+        },
+        onResearchFailed() {
+          /* silent — slides still generate without brief */
         },
         onSlideReceived(slide) {
           setMessages((prev) => {
@@ -1612,10 +2111,22 @@ export default function AIChatPage() {
                 ? 'apps'
                 : 'unknown';
       try {
+        // Run session creation and sandbox spawn in parallel — neither
+        // depends on the other's response.
+        const spawnPromise = computeApi
+          .spawn()
+          .then((session) => {
+            computerCtx.dispatch({
+              type: 'sandbox-ready',
+              id: `compute-${session.sandboxId}`,
+              sandboxId: session.sandboxId,
+            });
+          })
+          .catch(() => undefined);
         const created = await sessionsApi.create(trimmed, inferredSkill);
+        void spawnPromise;
         setServerSessionId(created.id);
         setSessionTitle(created.title);
-        // Update URL with ?session= so refresh keeps the session.
         const u = new URL(window.location.href);
         u.searchParams.set('session', created.id);
         window.history.replaceState({}, '', u.toString());
@@ -1655,10 +2166,10 @@ export default function AIChatPage() {
       return;
     }
     if (forceMode === 'design') {
-      // Design mode hint — instruct the agent to call generate_image instead of
-      // writing app files. The agent's system prompt already knows about the tool;
-      // this just nudges intent.
-      runCodeFlow(`Generate a design image for: ${trimmed}\n\nUse the generate_image tool. Do not write app files.`);
+      // Design mode — user wants a single generated image, not an app build.
+      // Tell Mr8 explicitly to call generate_image directly; this is a
+      // trivial ask, so no propose_plan gate.
+      runCodeFlow(`${trimmed}\n\n(Design mode — call generate_image directly. This is a single-image request, not a build, so skip propose_plan.)`);
       return;
     }
     if (forceMode === 'sheet') {
@@ -1681,6 +2192,10 @@ export default function AIChatPage() {
       await runVideoFlow(trimmed);
       return;
     }
+    if (forceMode === 'book') {
+      await runBookFlow(trimmed);
+      return;
+    }
     if (forceMode === 'visualization') {
       await runVisualizationFlow(trimmed);
       return;
@@ -1700,13 +2215,17 @@ export default function AIChatPage() {
           await runDeckFlow(trimmed, result.researchQuery ?? trimmed);
           return;
         }
+        if (result.intent === 'book' && result.confidence > 0.6) {
+          await runBookFlow(trimmed);
+          return;
+        }
       } catch {
         // Intent service is best-effort — fall through to code flow.
       }
     }
 
     runCodeFlow(trimmed);
-  }, [loading, forceMode, messages.length, runCodeFlow, runComputerFlow, runDeckFlow]);
+  }, [loading, forceMode, messages.length, runCodeFlow, runComputerFlow, runDeckFlow, runBookFlow]);
 
   useEffect(() => {
     if (initialPromptRef.current) return;
@@ -1797,9 +2316,15 @@ export default function AIChatPage() {
     navigate('/feed');
   }, [workspace, projectName, navigate]);
 
+  // Media-kind entries (generated images) live inline + in the modal —
+  // they should NOT auto-open the right artifact panel (which would just
+  // show "No preview available" for a design-only turn).
+  const hasNonMediaComputerActivity = computerCtx.state.timeline.some(
+    (e) => e.kind !== 'media'
+  );
   const hasArtifact =
     workspace.files.size > 0 ||
-    computerCtx.state.timeline.length > 0 ||
+    hasNonMediaComputerActivity ||
     activeSheets.length > 0;
   const artifactOpen = hasArtifact && !panelDismissed;
 
@@ -1829,15 +2354,34 @@ export default function AIChatPage() {
           )}
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => setShowSettings(true)}
-            className="p-1.5 text-ink-tertiary dark:text-[#666] hover:text-ink dark:hover:text-[#A0A0A0] transition-colors"
-            title="Settings"
-          >
+          <Tooltip content={chatHidden ? 'Show chat panel' : 'Hide chat panel'} side="bottom">
+            <button
+              onClick={() => {
+                setChatHidden((v) => {
+                  const next = !v;
+                  // Auto-reveal the artifact panel when hiding the chat so
+                  // the viewport never goes empty.
+                  if (next && hasArtifact) setPanelDismissed(false);
+                  return next;
+                });
+              }}
+              className="p-1.5 text-ink-tertiary dark:text-[#666] hover:text-ink dark:hover:text-[#A0A0A0] transition-colors"
+              aria-label={chatHidden ? 'Show chat panel' : 'Hide chat panel'}
+            >
+              {chatHidden ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+            </button>
+          </Tooltip>
+          <Tooltip content="Settings" side="bottom">
+            <button
+              onClick={() => setShowSettings(true)}
+              className="p-1.5 text-ink-tertiary dark:text-[#666] hover:text-ink dark:hover:text-[#A0A0A0] transition-colors"
+              aria-label="Settings"
+            >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
               <circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
             </svg>
-          </button>
+            </button>
+          </Tooltip>
           {workspace.files.size > 0 && (
             <>
               <button
@@ -1862,12 +2406,28 @@ export default function AIChatPage() {
         </div>
       </div>
 
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-hidden relative">
+        {chatHidden && (
+          <div className="absolute top-4 left-4 z-30">
+            <Tooltip content="Show chat panel" side="right">
+              <button
+                type="button"
+                onClick={() => setChatHidden(false)}
+                className="p-2 rounded-md bg-white dark:bg-[#141414] border border-edge dark:border-[#2A2A2A] shadow-sm text-ink dark:text-[#E8E8E8] hover:bg-surface-secondary dark:hover:bg-[#1A1A1A] transition-colors"
+                aria-label="Show chat panel"
+              >
+                <PanelLeftOpen size={16} />
+              </button>
+            </Tooltip>
+          </div>
+        )}
         <div
-          className={`flex flex-col transition-[width] duration-300 ease-out ${
-            artifactOpen
-              ? 'w-[420px] min-w-[360px] flex-shrink-0 bg-surface-secondary dark:bg-[#0F0F0F] border-r border-edge dark:border-[#1A1A1A]'
-              : 'flex-1 bg-white dark:bg-[#0A0A0A]'
+          className={`flex flex-col transition-[width,min-width] duration-300 ease-out ${
+            chatHidden
+              ? 'w-0 min-w-0 overflow-hidden border-r-0'
+              : artifactOpen
+                ? 'w-[420px] min-w-[360px] flex-shrink-0 bg-surface-secondary dark:bg-[#0F0F0F] border-r border-edge dark:border-[#1A1A1A]'
+                : 'flex-1 bg-white dark:bg-[#0A0A0A]'
           }`}
         >
           <div
@@ -1961,6 +2521,29 @@ export default function AIChatPage() {
                           result={msg.result}
                           status={msg.status}
                         />
+                        {msg.tool === 'fetch_unsplash_image' && msg.images && msg.images.length > 0 && (
+                          <div className="mt-2 grid grid-cols-2 gap-2 max-w-2xl">
+                            {msg.images.map((img, i) => (
+                              <a
+                                key={`${msg.id}-img-${i}`}
+                                href={img.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="block rounded-md overflow-hidden border border-edge dark:border-[#2A2A2A] bg-surface-secondary dark:bg-[#0F0F0F] hover:border-brand-orange transition-colors"
+                              >
+                                <img
+                                  src={img.url}
+                                  alt={img.alt}
+                                  loading="lazy"
+                                  className="w-full h-32 object-cover block"
+                                />
+                                <div className="px-2 py-1 text-[10px] text-ink-tertiary dark:text-[#666] truncate">
+                                  by {img.author}
+                                </div>
+                              </a>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     );
                   }
@@ -2024,32 +2607,11 @@ export default function AIChatPage() {
                         <PlanApprovalWidget
                           plan={msg.planEvent.plan}
                           pricing={msg.planEvent.pricing}
+                          accepted={msg.status === 'accepted'}
                           onAcceptBuild={msg.status === 'pending' ? acceptPlanAndBuild : () => {}}
                           onSpinForDiscount={msg.status === 'pending' ? onSpinForDiscount : () => {}}
                           onTellMr8={msg.status === 'pending' ? onTellMr8 : () => {}}
                         />
-                      </div>
-                    );
-                  }
-                  if (msg.kind === 'delivery-ready') {
-                    return (
-                      <div key={msg.id} className="animate-fade-slide-up my-3">
-                        <div className="flex items-center justify-between rounded-md border border-brand-green/40 bg-brand-green-soft dark:bg-emerald-950/40 px-3 py-2 text-[11px]">
-                          <div className="text-brand-green dark:text-emerald-200">
-                            Build verified. Accept & Merge to finalize —{' '}
-                            <span className="font-semibold">
-                              ${(msg.planEvent.pricing.dealerCents / 100).toFixed(2)}
-                            </span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={msg.status === 'pending' ? acceptDelivery : undefined}
-                            disabled={msg.status !== 'pending' || acceptingDelivery}
-                            className="rounded bg-brand-green px-3 py-1 font-semibold text-white hover:bg-brand-green-hover disabled:opacity-60"
-                          >
-                            {msg.status === 'accepted' ? 'Accepted' : acceptingDelivery ? 'Debiting…' : 'Accept & Merge'}
-                          </button>
-                        </div>
                       </div>
                     );
                   }
@@ -2095,7 +2657,53 @@ export default function AIChatPage() {
                           voiceName={msg.voiceName}
                           scriptText={msg.scriptText}
                           title={msg.title}
+                          kind={msg.audioKind}
                         />
+                      </div>
+                    );
+                  }
+                  if (msg.kind === 'book-outline') {
+                    return (
+                      <div key={msg.id} className="animate-fade-slide-up my-3">
+                        <div className="rounded-lg border border-edge dark:border-[#2A2A2A] bg-white dark:bg-[#141414] overflow-hidden max-w-2xl">
+                          <div className="px-4 py-3 border-b border-edge dark:border-[#2A2A2A] bg-surface-secondary dark:bg-[#0F0F0F]">
+                            <div className="text-xs text-ink-tertiary dark:text-[#888] uppercase tracking-wide mb-1">Book outline</div>
+                            <div className="text-base font-semibold text-ink dark:text-[#E8E8E8]">{msg.title}</div>
+                            <div className="text-[11px] text-ink-tertiary dark:text-[#888] mt-1">
+                              {msg.genre} · {msg.pov} · {msg.tone} · ~{msg.totalEstimatedWords.toLocaleString()} / {msg.targetWords.toLocaleString()} words
+                            </div>
+                          </div>
+                          {msg.themes.length > 0 && (
+                            <div className="px-4 py-2 border-b border-edge dark:border-[#2A2A2A]">
+                              <div className="flex flex-wrap gap-1.5">
+                                {msg.themes.map((t) => (
+                                  <span
+                                    key={t}
+                                    className="text-[11px] px-2 py-0.5 rounded-full border border-edge dark:border-[#2A2A2A] text-ink-secondary dark:text-[#A0A0A0]"
+                                  >
+                                    {t}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          <ol className="divide-y divide-edge dark:divide-[#2A2A2A]">
+                            {msg.chapters.map((c) => (
+                              <li key={c.n} className="px-4 py-3">
+                                <div className="flex items-baseline gap-2">
+                                  <span className="text-[11px] font-mono text-ink-tertiary dark:text-[#666] w-6 flex-shrink-0">{c.n}.</span>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-baseline justify-between gap-3">
+                                      <div className="text-sm font-medium text-ink dark:text-[#E8E8E8] truncate">{c.title}</div>
+                                      <div className="text-[11px] text-ink-tertiary dark:text-[#666] flex-shrink-0">~{c.estimatedWords.toLocaleString()} words</div>
+                                    </div>
+                                    <div className="text-[13px] text-ink-secondary dark:text-[#B0B0B0] mt-1 leading-snug">{c.beat}</div>
+                                  </div>
+                                </div>
+                              </li>
+                            ))}
+                          </ol>
+                        </div>
                       </div>
                     );
                   }
@@ -2126,6 +2734,134 @@ export default function AIChatPage() {
                           failReason={msg.failReason}
                         />
                       </div>
+                    );
+                  }
+                  if (msg.kind === 'generated-image') {
+                    const src = msg.imageUrl.startsWith('http')
+                      ? msg.imageUrl
+                      : `${getStaticBase()}${msg.imageUrl}`;
+                    return (
+                      <div key={msg.id} className="animate-fade-slide-up my-3">
+                        <div className="rounded-lg border border-edge dark:border-[#2A2A2A] bg-white dark:bg-[#141414] overflow-hidden max-w-2xl">
+                          <img
+                            src={src}
+                            alt={msg.prompt}
+                            width={msg.width}
+                            height={msg.height}
+                            className="w-full h-auto block"
+                          />
+                          <div className="flex items-center justify-between px-3 py-2 border-t border-edge dark:border-[#2A2A2A] bg-surface-secondary dark:bg-[#0F0F0F]">
+                            <span className="text-[11px] text-ink-tertiary dark:text-[#666] truncate pr-3">
+                              {msg.prompt}
+                            </span>
+                            <a
+                              href={src}
+                              download
+                              className="text-[11px] font-medium text-brand-orange hover:text-brand-orange-hover flex-shrink-0"
+                            >
+                              Download →
+                            </a>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+                  if (msg.kind === 'verify-screenshot') {
+                    const src = msg.imageUrl.startsWith('http')
+                      ? msg.imageUrl
+                      : `${getStaticBase()}${msg.imageUrl}`;
+                    return (
+                      <div key={msg.id} className="animate-fade-slide-up my-3">
+                        <div className="rounded-lg border border-edge dark:border-[#2A2A2A] bg-white dark:bg-[#141414] overflow-hidden max-w-2xl">
+                          <div className="flex items-center gap-2 px-3 py-2 border-b border-edge dark:border-[#2A2A2A] bg-surface-secondary dark:bg-[#0F0F0F]">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="text-brand-orange">
+                              <rect x="2" y="3" width="20" height="14" rx="2" />
+                              <line x1="8" y1="21" x2="16" y2="21" />
+                              <line x1="12" y1="17" x2="12" y2="21" />
+                            </svg>
+                            <span className="text-xs font-medium text-ink dark:text-[#E8E8E8]">
+                              Mr8's Computer — build preview
+                            </span>
+                          </div>
+                          <img src={src} alt="Build preview" className="w-full h-auto block" />
+                        </div>
+                      </div>
+                    );
+                  }
+                  if (msg.kind === 'verify-result') {
+                    if (msg.matches) {
+                      return (
+                        <div key={msg.id} className="animate-fade-slide-up my-2 inline-flex items-center gap-2 text-[12px] bg-brand-green-soft dark:bg-brand-green/15 text-brand-green rounded-full px-3 py-1.5 border border-brand-green/30">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="20 6 9 17 4 12" />
+                          </svg>
+                          <span>Everything looks great — {msg.summary}</span>
+                        </div>
+                      );
+                    }
+                    return (
+                      <div key={msg.id} className="animate-fade-slide-up my-2 rounded-md border border-amber-400/50 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-[12px] max-w-2xl">
+                        <div className="flex items-center gap-2 font-semibold text-amber-800 dark:text-amber-200">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                            <line x1="12" y1="9" x2="12" y2="13" />
+                            <line x1="12" y1="17" x2="12.01" y2="17" />
+                          </svg>
+                          Found {msg.issues.length} issue{msg.issues.length === 1 ? '' : 's'} — fixing
+                        </div>
+                        {msg.summary && (
+                          <div className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
+                            {msg.summary}
+                          </div>
+                        )}
+                        {msg.issues.length > 0 && (
+                          <ul className="mt-2 list-disc pl-5 space-y-0.5 text-amber-900 dark:text-amber-200">
+                            {msg.issues.map((issue, i) => (
+                              <li key={i}>{issue}</li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    );
+                  }
+                  if (msg.kind === 'app-ready') {
+                    return (
+                      <button
+                        key={msg.id}
+                        type="button"
+                        onClick={() => {
+                          setPanelDismissed(false);
+                          setRightTab('preview');
+                        }}
+                        className="animate-fade-slide-up my-3 group text-left w-full max-w-2xl rounded-2xl border border-edge dark:border-[#2A2A2A] bg-white dark:bg-[#141414] overflow-hidden hover:border-brand-orange dark:hover:border-brand-orange transition-colors"
+                      >
+                        <div className="aspect-video bg-gradient-to-br from-brand-orange/10 via-white to-brand-green/10 dark:from-brand-orange/20 dark:via-[#141414] dark:to-brand-green/20 flex items-center justify-center relative">
+                          <iframe
+                            src={wcManager.getState().url ?? 'about:blank'}
+                            title={msg.projectName}
+                            className="w-full h-full border-0 pointer-events-none"
+                            sandbox="allow-scripts allow-same-origin"
+                          />
+                          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
+                            <span className="bg-white/90 dark:bg-black/70 text-ink dark:text-white text-xs font-medium px-3 py-1.5 rounded-full shadow-sm">
+                              Open preview →
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between px-4 py-3 border-t border-edge dark:border-[#2A2A2A]">
+                          <div className="min-w-0">
+                            <div className="text-sm font-semibold text-ink dark:text-[#E8E8E8] truncate">
+                              {msg.projectName}
+                            </div>
+                            <div className="text-[11px] text-ink-tertiary dark:text-[#666]">
+                              {msg.fileCount} file{msg.fileCount === 1 ? '' : 's'} · live preview
+                            </div>
+                          </div>
+                          <span className="text-[11px] text-brand-orange font-semibold flex-shrink-0">
+                            Click to open →
+                          </span>
+                        </div>
+                      </button>
                     );
                   }
                   return null;
@@ -2199,8 +2935,8 @@ export default function AIChatPage() {
                   <button
                     type="button"
                     onClick={() => {
-                      setPanelDismissed(false);
-                      setRightTab('computer');
+                      const last = computerCtx.state.timeline[computerCtx.state.timeline.length - 1];
+                      computerModal.openModal(last?.id);
                     }}
                     className="flex items-center gap-1.5 text-[11px] bg-surface-secondary dark:bg-[#141414] border border-edge dark:border-[#2A2A2A] text-ink dark:text-[#E8E8E8] rounded px-2 py-1 hover:border-brand-orange dark:hover:border-[#FFB229] transition-colors"
                     title="Open Mr8's Computer"
@@ -2264,13 +3000,13 @@ export default function AIChatPage() {
               )}
               {computerCtx.state.timeline.length > 0 && (
                 <button
-                  onClick={() => setRightTab('computer')}
-                  className={`px-3 py-1 text-sm rounded transition-colors flex items-center gap-1.5 ${
-                    rightTab === 'computer'
-                      ? 'text-brand-orange bg-surface-tertiary dark:bg-[#1A1A1A] font-semibold'
-                      : 'text-[#B37600] dark:text-[#FFB229] hover:bg-surface-tertiary dark:hover:bg-[#1A1A1A]'
-                  }`}
-                  title="Mr8's Computer activity"
+                  onClick={() => {
+                    const last =
+                      computerCtx.state.timeline[computerCtx.state.timeline.length - 1];
+                    computerModal.openModal(last?.id);
+                  }}
+                  className="px-3 py-1 text-sm rounded transition-colors flex items-center gap-1.5 text-[#B37600] dark:text-[#FFB229] hover:bg-surface-tertiary dark:hover:bg-[#1A1A1A]"
+                  title="Open Mr8's Computer modal"
                 >
                   <span
                     className={`w-1.5 h-1.5 rounded-full ${
@@ -2309,9 +3045,7 @@ export default function AIChatPage() {
             </div>
 
             <div className="flex-1 min-h-0">
-              {rightTab === 'computer' ? (
-                <ComputerPanel />
-              ) : rightTab === 'code' ? (
+              {rightTab === 'code' ? (
                 <WorkspacePanel
                   workspace={workspace}
                   recentFiles={recentFiles}
@@ -2328,6 +3062,20 @@ export default function AIChatPage() {
                   files={workspace.files}
                   isGenerating={loading}
                   fallbackHtml={workspace.previewHtml}
+                  projectName={projectName}
+                  onAddAiChat={injectAiChatWidget}
+                  onSaveEdits={(edits, hint) => {
+                    const prompt = [
+                      'The user edited the live preview and wants these changes persisted to source.',
+                      `Target element: ${hint}`,
+                      '',
+                      'Edit list (apply in order):',
+                      ...edits.map((e, i) => `${i + 1}. ${JSON.stringify(e)}`),
+                      '',
+                      'Find the matching component in src/ and patch it via write_file so the edits survive a refresh. Then call verify_build.',
+                    ].join('\n');
+                    runCodeFlow(prompt, { skipUserMessage: true, displayTitle: 'Save live edits to source' });
+                  }}
                 />
               )}
             </div>

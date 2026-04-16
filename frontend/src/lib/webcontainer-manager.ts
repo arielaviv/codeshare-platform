@@ -59,6 +59,12 @@ class WebContainerManager {
     return this.state;
   }
 
+  /** Read-only copy of the files currently mounted. Used by the Theme
+   *  editor + Library panel to read + rewrite project source. */
+  getFiles(): Map<string, string> {
+    return new Map(this.currentFiles);
+  }
+
   private hashString(s: string): string {
     let hash = 0;
     for (let i = 0; i < s.length; i++) {
@@ -142,9 +148,25 @@ class WebContainerManager {
       this.update({ status: 'running', url });
     });
 
+    // If the dev process exits before server-ready, surface the tail of
+    // its logs — otherwise the preview just hangs on "starting".
+    void devProcess.exit.then((code) => {
+      if (this.state.status !== 'running') {
+        const tail = this.state.devLogs.split('\n').slice(-15).join('\n');
+        this.update({
+          status: 'error',
+          error: `Dev server exited with code ${code} before becoming ready.\n${tail}`,
+        });
+      }
+    });
+
     setTimeout(() => {
       if (this.state.status === 'starting') {
-        this.update({ status: 'error', error: 'Dev server timeout (60s)' });
+        const tail = this.state.devLogs.split('\n').slice(-15).join('\n');
+        this.update({
+          status: 'error',
+          error: `Dev server timeout (60s). Last output:\n${tail}`,
+        });
       }
     }, 60000);
   }
@@ -154,7 +176,28 @@ class WebContainerManager {
 
     for (const [path, content] of files) {
       if (this.currentFiles.get(path) !== content) {
-        await this.container.fs.writeFile(path, content);
+        // Ensure parent dir exists — WebContainer's fs.writeFile does NOT
+        // auto-create parents, and the agent can stream files in any
+        // order (e.g., src/index.css before src/main.tsx), so any nested
+        // path needs a recursive mkdir first. Without this, Vite errors
+        // with ENOENT and the preview hangs.
+        const lastSlash = path.lastIndexOf('/');
+        if (lastSlash > 0) {
+          const dir = path.slice(0, lastSlash);
+          try {
+            await this.container.fs.mkdir(dir, { recursive: true });
+          } catch {
+            // mkdir is idempotent when dir exists — ignore.
+          }
+        }
+        try {
+          await this.container.fs.writeFile(path, content);
+        } catch (err) {
+          // Surface to devLogs so the user/devtools see the real failure
+          // instead of a silent unhandled rejection.
+          const msg = err instanceof Error ? err.message : String(err);
+          console.warn(`[wc] writeFile failed ${path}: ${msg}`);
+        }
       }
     }
 

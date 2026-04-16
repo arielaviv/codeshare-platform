@@ -74,4 +74,10 @@ export const SAMPLE_PROMPTS: Record<ForceMode, string[]> = {
     'Every Friday 5pm: generate a weekly progress report',
     'First of each month: build a budget tracker for the new month',
   ],
+  book: [
+    'Write a 2,000-word sci-fi novella about a lighthouse keeper who discovers the light is sentient',
+    'Draft a short non-fiction guide: how to run your first 5K in 8 weeks',
+    'Write a children\u2019s book about a shy robot who wants to join the school band',
+    'Draft a literary short story about two siblings dividing their late mother\u2019s house',
+  ],
 };

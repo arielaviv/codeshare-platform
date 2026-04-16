@@ -16,6 +16,7 @@ export interface SessionSummary {
 
 export interface SessionDetail extends SessionSummary {
   firstUserMessage: string;
+  messages: Array<Record<string, unknown> & { id: string; kind: string }>;
 }
 
 export const sessionsApi = {
@@ -28,7 +29,14 @@ export const sessionsApi = {
   get: (id: string): Promise<SessionDetail> =>
     api.get(`/sessions/${id}`).then((r) => r.data),
 
-  patch: (id: string, body: Partial<{ title: string; unreadCount: number }>): Promise<{ id: string; title: string }> =>
+  patch: (
+    id: string,
+    body: Partial<{
+      title: string;
+      unreadCount: number;
+      messages: Array<Record<string, unknown> & { id: string; kind: string }>;
+    }>
+  ): Promise<{ id: string; title: string }> =>
     api.patch(`/sessions/${id}`, body).then((r) => r.data),
 
   remove: (id: string): Promise<void> =>

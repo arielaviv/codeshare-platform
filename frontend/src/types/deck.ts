@@ -136,7 +136,7 @@ export interface GenerateDeckRequest {
   researchBrief?: ResearchBrief;
 }
 
-export type UserIntent = 'deck' | 'code-app' | 'code-explain' | 'computer';
+export type UserIntent = 'deck' | 'code-app' | 'code-explain' | 'computer' | 'book';
 
 export interface ClassifyIntentResponse {
   intent: UserIntent;

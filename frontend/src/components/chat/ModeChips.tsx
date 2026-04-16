@@ -43,6 +43,7 @@ const MORE_MENU: ChipDef[] = [
   { mode: 'chat',          label: 'Chat mode',     icon: <ChatIcon /> },
   { mode: 'deck',          label: 'Slide deck',    icon: <DeckIcon /> },
   { mode: 'design',        label: 'Design',        icon: <DesignIcon /> },
+  { mode: 'book',          label: 'Write a book',  icon: <BookIcon /> },
 ];
 
 export default function ModeChips({ onSelect, selectedMode }: Props): JSX.Element {
@@ -87,7 +88,7 @@ export default function ModeChips({ onSelect, selectedMode }: Props): JSX.Elemen
         </button>
         {moreOpen && (
           <div
-            className="absolute z-50 right-0 top-full mt-1 w-[240px] bg-white dark:bg-[#141414] border border-edge dark:border-[#2A2A2A] rounded-lg shadow-xl py-1.5"
+            className="absolute z-50 right-0 bottom-full mb-2 w-[240px] bg-white dark:bg-[#141414] border border-edge dark:border-[#2A2A2A] rounded-lg shadow-xl py-1.5"
             role="menu"
           >
             {MORE_MENU.map((chip) => (
@@ -150,3 +151,4 @@ function ChartIcon() { return <I><line x1="18" y1="20" x2="18" y2="10" /><line x
 function VideoIcon() { return <I><polygon points="23 7 16 12 23 17 23 7" /><rect x="1" y="5" width="15" height="14" rx="2" /></I>; }
 function AudioIcon() { return <I><path d="M3 12h2l3-9 4 18 3-9h6" /></I>; }
 function ChatIcon() { return <I><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></I>; }
+function BookIcon() { return <I><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" /></I>; }

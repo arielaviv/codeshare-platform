@@ -2,22 +2,36 @@ import { getApiBase } from '../lib/apiBase';
 
 const API_URL = getApiBase();
 
+export type AudioKind = 'tts' | 'sfx' | 'music';
+
 export interface AudioStreamHandlers {
   onStarted(data: { prompt: string }): void;
+  onKind?(data: { kind: AudioKind }): void;
   onScriptDrafted(data: { text: string }): void;
   onTtsGenerating(data: { voiceId: string; voiceName: string; charCount: number }): void;
+  onSfxGenerating?(data: { durationSec: number; prompt: string }): void;
+  onMusicGenerating?(data: { lengthMs: number; prompt: string }): void;
   onReady(data: {
     audioId: string;
     audioUrl: string;
     durationSec: number;
     voiceName: string;
     scriptText: string;
+    kind?: AudioKind;
   }): void;
   onError(message: string): void;
 }
 
 export function streamAudioGeneration(
-  req: { prompt: string; scriptText?: string; voiceId?: string; sessionId?: string },
+  req: {
+    prompt: string;
+    scriptText?: string;
+    voiceId?: string;
+    sessionId?: string;
+    kind?: AudioKind;
+    sfxDurationSec?: number;
+    musicLengthMs?: number;
+  },
   handlers: AudioStreamHandlers
 ): AbortController {
   const controller = new AbortController();
@@ -40,7 +54,20 @@ export function streamAudioGeneration(
       return;
     }
     if (!response.ok || !response.body) {
-      handlers.onError('Audio generation failed');
+      let body = '';
+      try {
+        body = await response.text();
+      } catch {
+        // ignore
+      }
+      let parsed: { message?: string } = {};
+      try {
+        parsed = JSON.parse(body) as { message?: string };
+      } catch {
+        // not json
+      }
+      const detail = parsed.message || body.slice(0, 200) || 'no body';
+      handlers.onError(`Audio generation failed (${response.status}): ${detail}`);
       return;
     }
     const reader = response.body.getReader();
@@ -66,8 +93,11 @@ export function streamAudioGeneration(
             const parsed = JSON.parse(data);
             switch (event) {
               case 'audio_started': handlers.onStarted(parsed); break;
+              case 'audio_kind': handlers.onKind?.(parsed); break;
               case 'script_drafted': handlers.onScriptDrafted(parsed); break;
               case 'tts_generating': handlers.onTtsGenerating(parsed); break;
+              case 'sfx_generating': handlers.onSfxGenerating?.(parsed); break;
+              case 'music_generating': handlers.onMusicGenerating?.(parsed); break;
               case 'audio_ready': handlers.onReady(parsed); break;
               case 'error': handlers.onError(parsed.message || 'Unknown error'); break;
             }

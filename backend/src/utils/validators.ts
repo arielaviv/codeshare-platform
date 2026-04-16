@@ -179,6 +179,22 @@ export const generateDeckSchema = z.object({
   style: z.enum(['professional', 'casual', 'academic']).optional(),
   templateId: z.string().max(100).optional(),
   researchBrief: researchBriefSchema.optional(),
+  /** When true, skip the inline browser research step. Default false. */
+  skipResearch: z.boolean().optional(),
+});
+
+export const generateBookSchema = z.object({
+  prompt: z
+    .string()
+    .min(5, 'Prompt must be at least 5 characters')
+    .max(5000, 'Prompt cannot exceed 5000 characters'),
+  targetWords: z
+    .number()
+    .int()
+    .min(500, 'Target must be at least 500 words')
+    .max(120000, 'Target cannot exceed 120,000 words')
+    .optional(),
+  sessionId: z.string().optional(),
 });
 
 export const classifyIntentSchema = z.object({
@@ -210,4 +226,5 @@ export type CreateDeckInput = z.infer<typeof createDeckSchema>;
 export type UpdateDeckInput = z.infer<typeof updateDeckSchema>;
 export type GenerateDeckInput = z.infer<typeof generateDeckSchema>;
 export type ClassifyIntentInput = z.infer<typeof classifyIntentSchema>;
+export type GenerateBookInput = z.infer<typeof generateBookSchema>;
 export type AcceptDeliveryInput = z.infer<typeof acceptDeliverySchema>;

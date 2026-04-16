@@ -101,6 +101,20 @@ export const computerRateLimiter = rateLimit({
   },
 });
 
+export const bookGenerationRateLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  message: {
+    status: 'error',
+    message: 'Book generation rate limit reached. Please try again later.',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    return req.user?._id?.toString() || req.ip || 'anonymous';
+  },
+});
+
 export const researchRateLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 10,

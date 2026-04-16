@@ -1,5 +1,5 @@
 import { API_URL } from './api';
-import type { GenerateDeckRequest, Slide } from '../types/deck';
+import type { GenerateDeckRequest, ResearchBrief, Slide } from '../types/deck';
 import type { PrizeAward } from '../types';
 
 export interface DeckStreamHandlers {
@@ -8,6 +8,15 @@ export interface DeckStreamHandlers {
   onComplete(data: { deckId: string; title: string; slideCount: number }): void;
   onPrizeAwarded?(prize: PrizeAward): void;
   onError(message: string): void;
+  // Part 3: optional research-phase handlers. Backend prefixes research
+  // subagent events with `research_` so this stream stays backward
+  // compatible; clients that don't care can omit these.
+  onPhase?(phase: 'researching' | 'drafting'): void;
+  onResearchBrowserStart?(data: { executionId?: string; streamUrl?: string }): void;
+  onResearchBrowserAction?(data: { executionId?: string; action?: string; target?: string; url?: string; title?: string }): void;
+  onResearchBrowserEnd?(data: { executionId?: string }): void;
+  onResearchBriefReady?(data: ResearchBrief): void;
+  onResearchFailed?(data: { message: string }): void;
 }
 
 export function streamDeckGeneration(
@@ -105,6 +114,24 @@ export function streamDeckGeneration(
                   newBalanceCents: parsed.newBalanceCents,
                   reason: parsed.reason || '',
                 });
+                break;
+              case 'deck_phase':
+                handlers.onPhase?.(parsed.phase);
+                break;
+              case 'research_browser-start':
+                handlers.onResearchBrowserStart?.(parsed);
+                break;
+              case 'research_browser-action':
+                handlers.onResearchBrowserAction?.(parsed);
+                break;
+              case 'research_browser-end':
+                handlers.onResearchBrowserEnd?.(parsed);
+                break;
+              case 'research_brief_ready':
+                handlers.onResearchBriefReady?.(parsed);
+                break;
+              case 'research_failed':
+                handlers.onResearchFailed?.(parsed);
                 break;
               case 'error':
                 handlers.onError(parsed.message || 'Unknown error');
