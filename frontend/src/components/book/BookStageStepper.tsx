@@ -20,6 +20,9 @@ interface BookShape {
   outline?: { chapters: Array<unknown>; totalEstimatedWords: number };
   coverVariants?: Array<unknown>;
   selectedCoverIdx?: number;
+  chapters?: Array<{ n?: number; status?: string }>;
+  auditIssues?: Array<{ resolved?: boolean }>;
+  editingChoices?: { aggressiveness?: string };
   status: string;
 }
 
@@ -51,6 +54,44 @@ function computeStages(book: BookShape): Stage[] {
   const hasCovers = (book.coverVariants?.length ?? 0) > 0;
   const coverPicked = typeof book.selectedCoverIdx === 'number' && book.selectedCoverIdx > 0;
 
+  // Draft / Polish state from book.chapters[] (authoritative per-chapter status).
+  const chapters = book.chapters ?? [];
+  const totalChapters = chapters.length || chapterCount;
+  const drafted = chapters.filter((c) => c.status === 'drafted' || c.status === 'editing' || c.status === 'edited' || c.status === 'proofing' || c.status === 'proofed').length;
+  const edited = chapters.filter((c) => c.status === 'edited' || c.status === 'proofing' || c.status === 'proofed').length;
+  const proofed = chapters.filter((c) => c.status === 'proofed').length;
+  const drafting = chapters.some((c) => c.status === 'drafting');
+  const editing = chapters.some((c) => c.status === 'editing');
+  const proofing = chapters.some((c) => c.status === 'proofing');
+  const ch1Drafted = chapters.find((c) => c.n === 1)?.status === 'drafted' ||
+    chapters.find((c) => c.n === 1)?.status === 'edited' ||
+    chapters.find((c) => c.n === 1)?.status === 'proofed';
+
+  const auditCount = book.auditIssues?.length ?? 0;
+  const auditResolved = (book.auditIssues ?? []).filter((i) => i.resolved).length;
+  const hasAudit = Array.isArray(book.auditIssues);
+
+  const draftStatus: Stage['status'] =
+    totalChapters > 0 && drafted === totalChapters ? 'done'
+    : drafting ? 'running'
+    : ch1Drafted ? 'running'
+    : 'pending';
+
+  const polishStatus: Stage['status'] =
+    totalChapters > 0 && proofed === totalChapters ? 'done'
+    : proofing || editing ? 'running'
+    : hasAudit && drafted === totalChapters ? 'running'
+    : 'pending';
+
+  const polishSub = (() => {
+    if (totalChapters === 0) return 'Audit · line · copy';
+    if (proofed === totalChapters) return `All ${totalChapters} polished`;
+    if (proofing) return `Copy-editing ${proofed + 1} of ${totalChapters}`;
+    if (editing) return `Line-editing ${edited + 1} of ${totalChapters}`;
+    if (hasAudit) return auditCount === 0 ? 'Audit clean · starting line-edit' : `Audit found ${auditCount} (${auditResolved} resolved)`;
+    return 'Audit · line · copy';
+  })();
+
   return [
     {
       id: 'outline',
@@ -76,22 +117,22 @@ function computeStages(book: BookShape): Stage[] {
       id: 'voice',
       label: 'Voice',
       icon: <Mic size={ICON_SIZE} />,
-      subtext: 'Chapter 1',
-      status: coverPicked ? 'pending' : 'pending',
+      subtext: ch1Drafted ? 'Approved' : coverPicked ? 'Drafting' : 'Pending',
+      status: drafted > 1 || edited > 0 || proofed > 0 ? 'done' : ch1Drafted ? 'awaiting-approval' : drafting ? 'running' : 'pending',
     },
     {
       id: 'draft',
       label: 'Draft',
       icon: <PenLine size={ICON_SIZE} />,
-      subtext: `${chapterCount > 0 ? `0 of ${chapterCount}` : 'Pending'}`,
-      status: 'pending',
+      subtext: totalChapters > 0 ? `${drafted} of ${totalChapters}` : 'Pending',
+      status: draftStatus,
     },
     {
       id: 'polish',
       label: 'Polish',
       icon: <Sparkles size={ICON_SIZE} />,
-      subtext: 'Audit · line · copy',
-      status: 'pending',
+      subtext: polishSub,
+      status: polishStatus,
     },
     {
       id: 'format',

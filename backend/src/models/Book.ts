@@ -75,8 +75,31 @@ export interface IBookChapter {
   wordCount?: number;
   /** Brief summary of what the Line Editor changed — shown in Final mode. */
   editingNotes?: string;
+  /** Per-chunk skip log for line-edit safeguards; shown in Reader gutter. */
+  skippedChunkIdxs?: number[];
   /** Last error for this chapter (draft/edit/proof). */
   errorMessage?: string;
+}
+
+export type EditAggressiveness = 'light' | 'standard' | 'heavy';
+
+export interface IBookAuditIssue {
+  kind: 'character' | 'timeline' | 'setting' | 'name' | 'tone' | 'continuity';
+  /** 1-based chapter indexes. Single-chapter issues have one element; cross-chapter
+   *  contradictions list every chapter involved. */
+  chapterRange: number[];
+  description: string;
+  suggestedFix: string;
+  /** Flipped to true by the Line Editor when it applies a fix in that chapter's range. */
+  resolved?: boolean;
+}
+
+export interface IBookEditingChoices {
+  aggressiveness: EditAggressiveness;
+  /** Optional author-written note injected into the Line Editor's system prompt. */
+  directives?: string;
+  /** Timestamp of the user's choice, for the stepper. */
+  chosenAt?: Date;
 }
 
 export interface IBookOutline {
@@ -107,6 +130,10 @@ export interface IBook extends Document {
    * Survives E2B sandbox death and is the source of truth for regenerate flows.
    */
   chapters?: IBookChapter[];
+  /** Continuity audit results; populated by the Slice 5 auditor. */
+  auditIssues?: IBookAuditIssue[];
+  /** User's picks for the Polish pipeline (aggressiveness + directives). */
+  editingChoices?: IBookEditingChoices;
   /** AI-picked at outline-complete from pickThemeForOutline(); user-overridable via Studio dropdown. */
   themeId: BookThemeId;
   status: BookStatus;
@@ -157,7 +184,37 @@ const chapterSchema = new Schema<IBookChapter>(
     audioPath: { type: String, required: false },
     wordCount: { type: Number, required: false, min: 0 },
     editingNotes: { type: String, required: false, maxlength: 500 },
+    skippedChunkIdxs: { type: [Number], default: undefined },
     errorMessage: { type: String, required: false, maxlength: 1000 },
+  },
+  { _id: false }
+);
+
+const auditIssueSchema = new Schema<IBookAuditIssue>(
+  {
+    kind: {
+      type: String,
+      required: true,
+      enum: ['character', 'timeline', 'setting', 'name', 'tone', 'continuity'],
+    },
+    chapterRange: { type: [Number], required: true },
+    description: { type: String, required: true, maxlength: 1000 },
+    suggestedFix: { type: String, required: true, maxlength: 1000 },
+    resolved: { type: Boolean, required: false, default: false },
+  },
+  { _id: false }
+);
+
+const editingChoicesSchema = new Schema<IBookEditingChoices>(
+  {
+    aggressiveness: {
+      type: String,
+      required: true,
+      enum: ['light', 'standard', 'heavy'],
+      default: 'standard',
+    },
+    directives: { type: String, required: false, maxlength: 1000 },
+    chosenAt: { type: Date, required: false },
   },
   { _id: false }
 );
@@ -196,6 +253,8 @@ const bookSchema = new Schema<IBook>(
     coverVariants: { type: [coverVariantSchema], default: undefined },
     selectedCoverIdx: { type: Number, required: false, min: 1, max: 12 },
     chapters: { type: [chapterSchema], default: undefined },
+    auditIssues: { type: [auditIssueSchema], default: undefined },
+    editingChoices: { type: editingChoicesSchema, required: false },
     themeId: {
       type: String,
       required: true,

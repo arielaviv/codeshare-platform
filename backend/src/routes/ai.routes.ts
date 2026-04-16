@@ -11,6 +11,7 @@ import {
   bookGenerationRateLimiter,
   coverGenerationRateLimiter,
   chapterDraftingRateLimiter,
+  bookAuditRateLimiter,
 } from '../middleware/rateLimit.middleware';
 import { getCodeExplanation } from '../services/ai.service';
 import { chatWithTools } from '../services/ai-chat.service';
@@ -28,13 +29,28 @@ import { runComputerAgent } from '../services/computer-agent.service';
 import { createComputerSSEWriter } from '../services/computer/sse-writer';
 import type { ComputerSSEWriter } from '../services/computer/sse-writer';
 import { runResearchAgent } from '../services/research/research-agent.service';
-import { generateDeckSchema, classifyIntentSchema, acceptDeliverySchema, generateBookSchema, generateBookCoverSchema, planBookSchema, draftBookSchema } from '../utils/validators';
+import {
+  generateDeckSchema,
+  classifyIntentSchema,
+  acceptDeliverySchema,
+  generateBookSchema,
+  generateBookCoverSchema,
+  planBookSchema,
+  draftBookSchema,
+  polishBookSchema,
+  auditBookSchema,
+  reEditChapterSchema,
+} from '../utils/validators';
 import { generateBook } from '../services/book-agent.service';
 import type { BookAgentSSEWriter } from '../services/book-agent.service';
 import { generateBookCovers } from '../services/book-cover.service';
 import type { BookCoverSSEWriter } from '../services/book-cover.service';
 import { planBook } from '../services/book/planner.service';
 import { runBookAgent } from '../services/book/book-agent-loop.service';
+import { runPolishPipeline } from '../services/book/producer.service';
+import { runContinuityAudit } from '../services/book/continuity-auditor.service';
+import { runLineEdit } from '../services/book/line-editor.service';
+import { runCopyEdit } from '../services/book/copy-editor.service';
 import { ApiError } from '../middleware/error.middleware';
 import type { ChatMessage, AgentRequest } from '../types/chat';
 import { debitForFeature } from '../services/wallet.service';
@@ -1101,6 +1117,198 @@ router.post(
         res.write(`event: error\ndata: ${JSON.stringify({ message: 'Book drafting failed' })}\n\n`);
         res.end();
       }
+    }
+  }
+);
+
+/**
+ * Mr8 Book — polish-book SSE endpoint (Slice 5).
+ * Runs the full 3-pass pipeline: audit → line-edit → copy-edit. Streams
+ * per-pass stage_started / per-chapter events / stage_complete and a
+ * terminal pipeline_complete.
+ */
+router.post(
+  '/polish-book',
+  authenticate,
+  chapterDraftingRateLimiter, // polish and drafting share budget; both are Sonnet-heavy
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const validation = polishBookSchema.safeParse(req.body);
+      if (!validation.success) throw new ApiError(validation.error.errors[0].message, 400);
+      if (!req.user) throw new ApiError('Unauthorized', 401);
+
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders();
+
+      let closed = false;
+      req.on('close', () => { closed = true; });
+
+      const writer = {
+        send(event: string, data: unknown) {
+          if (closed) return;
+          res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        },
+        end() {
+          if (!closed) res.end();
+        },
+      };
+
+      try {
+        await runPolishPipeline(
+          {
+            bookId: validation.data.bookId,
+            userId: req.user._id,
+            aggressiveness: validation.data.aggressiveness,
+            directives: validation.data.directives,
+            skipAudit: validation.data.skipAudit,
+            sessionId: validation.data.sessionId,
+          },
+          writer
+        );
+      } catch (innerErr) {
+        const message = innerErr instanceof Error ? innerErr.message : String(innerErr);
+        try {
+          writer.send('error', { message: `Polish pipeline crashed: ${message}` });
+          writer.end();
+        } catch { /* socket already closed */ }
+        console.error('[book-polish] crashed after headers flushed', innerErr);
+      }
+    } catch (err) {
+      if (!res.headersSent) {
+        if (err instanceof ApiError) next(err);
+        else if (err instanceof Error) next(new ApiError(err.message, 500));
+        else next(err);
+      } else {
+        res.write(`event: error\ndata: ${JSON.stringify({ message: 'Polish failed' })}\n\n`);
+        res.end();
+      }
+    }
+  }
+);
+
+/**
+ * Mr8 Book — audit-book SSE endpoint (standalone re-audit, Slice 5).
+ * Runs ONLY the Continuity Auditor. Useful for re-running audit after
+ * manual edits without paying for the full polish pipeline.
+ */
+router.post(
+  '/audit-book',
+  authenticate,
+  bookAuditRateLimiter,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const validation = auditBookSchema.safeParse(req.body);
+      if (!validation.success) throw new ApiError(validation.error.errors[0].message, 400);
+      if (!req.user) throw new ApiError('Unauthorized', 401);
+
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders();
+
+      let closed = false;
+      req.on('close', () => { closed = true; });
+
+      const writer = {
+        send(event: string, data: unknown) {
+          if (closed) return;
+          res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        },
+        end() {
+          if (!closed) res.end();
+        },
+      };
+
+      try {
+        await runContinuityAudit(
+          { bookId: validation.data.bookId, userId: req.user._id, sessionId: validation.data.sessionId },
+          writer
+        );
+      } catch (innerErr) {
+        const message = innerErr instanceof Error ? innerErr.message : String(innerErr);
+        try {
+          writer.send('error', { message: `Audit crashed: ${message}` });
+          writer.end();
+        } catch { /* ignore */ }
+      }
+      if (!closed) writer.end();
+    } catch (err) {
+      if (!res.headersSent) next(err);
+      else res.end();
+    }
+  }
+);
+
+/**
+ * Mr8 Book — re-edit-chapter SSE endpoint (Slice 5).
+ * Re-runs Line Editor + Copy Editor for a single chapter with user-chosen
+ * aggressiveness + directives. Used by the Chapter sidebar's "Regenerate
+ * edit" hover action.
+ */
+router.post(
+  '/re-edit-chapter',
+  authenticate,
+  chapterDraftingRateLimiter,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const validation = reEditChapterSchema.safeParse(req.body);
+      if (!validation.success) throw new ApiError(validation.error.errors[0].message, 400);
+      if (!req.user) throw new ApiError('Unauthorized', 401);
+
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders();
+
+      let closed = false;
+      req.on('close', () => { closed = true; });
+
+      const writer = {
+        send(event: string, data: unknown) {
+          if (closed) return;
+          res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        },
+        end() {
+          if (!closed) res.end();
+        },
+      };
+
+      try {
+        await runLineEdit(
+          {
+            bookId: validation.data.bookId,
+            userId: req.user._id,
+            aggressiveness: validation.data.aggressiveness,
+            directives: validation.data.directives,
+            chapterN: validation.data.chapterN,
+            sessionId: validation.data.sessionId,
+          },
+          { send: writer.send, end() { /* outer owns */ } }
+        );
+        await runCopyEdit(
+          {
+            bookId: validation.data.bookId,
+            userId: req.user._id,
+            chapterN: validation.data.chapterN,
+            sessionId: validation.data.sessionId,
+          },
+          writer
+        );
+      } catch (innerErr) {
+        const message = innerErr instanceof Error ? innerErr.message : String(innerErr);
+        try {
+          writer.send('error', { message: `Re-edit crashed: ${message}` });
+          writer.end();
+        } catch { /* ignore */ }
+      }
+    } catch (err) {
+      if (!res.headersSent) next(err);
+      else res.end();
     }
   }
 );

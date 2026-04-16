@@ -51,6 +51,11 @@ export interface BookChapterRecord {
   beat: string;
   estimatedWords: number;
   status?: string;
+  draftPath?: string;
+  editedPath?: string;
+  proofedPath?: string;
+  wordCount?: number;
+  editingNotes?: string;
 }
 
 export interface BookCoverVariantRecord {
@@ -81,6 +86,12 @@ interface BookRecord {
     genre: string;
     tone: string;
   };
+  /**
+   * Authoritative per-chapter state after drafting/editing/proofing begins.
+   * Carries status + path pointers used by ChaptersStrip and the Raw/Edited/Final
+   * toggle in ChaptersSection. Mirrors backend IBookChapter.
+   */
+  chapters?: BookChapterRecord[];
   coverVariants?: BookCoverVariantRecord[];
   selectedCoverIdx?: number;
   status: string;
@@ -217,7 +228,10 @@ export default function BookStudioPanel({ bookId, liveMode, liveReaderRef, initi
     );
   }
 
-  const chapters = book.outline?.chapters ?? [];
+  // Prefer book.chapters[] (authoritative per-chapter state once drafting begins);
+  // fall back to outline.chapters for the pre-draft phase when paths don't exist yet.
+  // Chapters[] carries the actual status + draft/edited/proofed path pointers.
+  const chapters = book.chapters && book.chapters.length > 0 ? book.chapters : (book.outline?.chapters ?? []);
   const activeChapter = chapters.find((c) => c.n === activeChapterN) ?? chapters[0] ?? null;
   const selectedCover = book.coverVariants?.find((v) => v.idx === book.selectedCoverIdx) ?? null;
 

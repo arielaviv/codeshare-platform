@@ -25,6 +25,9 @@ import ArtifactPanel from '../components/shared/ArtifactPanel';
 import BookStudioPanel from '../components/book/BookStudioPanel';
 import type { LiveReaderHandle } from '../components/book/LiveReader';
 import { streamBookAgent } from '../services/bookAgentStream';
+import { streamBookPolish, type AuditIssue as PolishAuditIssue, type EditAggressiveness } from '../services/bookPolishStream';
+import AggressivenessPickerCard from '../components/book/AggressivenessPickerCard';
+import AuditIssuesCard from '../components/book/AuditIssuesCard';
 import ToolCallCard from '../components/chat/ToolCallCard';
 import TaskListCard from '../components/chat/TaskListCard';
 import ComputerActivityCard from '../components/chat/ComputerActivityCard';
@@ -222,6 +225,23 @@ type ChatItem =
       options: string[];
       status: 'pending' | 'resolving' | 'resolved' | 'error';
       errorMessage?: string;
+    }
+  | {
+      // Mr8 Book — pre-polish aggressiveness picker. Pushed after drafting
+      // completes. Click continues into the Polish pipeline.
+      id: string;
+      kind: 'aggressiveness-picker';
+      bookId: string;
+      status: 'pending' | 'answered-polish' | 'answered-skip';
+      chosenAggressiveness?: EditAggressiveness;
+    }
+  | {
+      // Mr8 Book — continuity audit issues card.
+      id: string;
+      kind: 'audit-issues';
+      bookId: string;
+      bookTitle: string;
+      issues: PolishAuditIssue[];
     }
   | {
       // Phase 9F: Video result card. Updated in place as Runway progresses.
@@ -2053,6 +2073,26 @@ export default function AIChatPage() {
             // inside the goal so curious users can expand it.
             const friendly = buildFriendlyStageSummary(opts.stage, data.status, data.summary);
             setGoalStatus('done', friendly);
+
+            // When the 'remaining' draft stage finishes cleanly, push the
+            // aggressiveness picker so the user can pick how aggressive the
+            // Polish pass should be.
+            if (opts.stage === 'remaining' && data.status === 'done') {
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: `asst-${Date.now()}-polish-intro`,
+                  kind: 'assistant-text',
+                  content: "All chapters drafted. One quick pick before I polish —",
+                },
+                {
+                  id: `agg-picker-${Date.now()}`,
+                  kind: 'aggressiveness-picker',
+                  bookId,
+                  status: 'pending',
+                },
+              ]);
+            }
           },
           onError(message) {
             setGoalStatus('error');
@@ -2073,6 +2113,166 @@ export default function AIChatPage() {
       );
     },
     [serverSessionId, computerCtx, messages, refreshStudioBook]
+  );
+
+  /**
+   * Mr8 Book — runs the 3-pass Polish pipeline (audit → line-edit → copy-edit).
+   * Pushes a goal card with 3 actions. Pushes an audit-issues chat card on
+   * audit.issues_ready. Refreshes the Studio at pipeline_complete so
+   * ChaptersStrip + Reader reflect new chapter statuses and editedPaths.
+   */
+  const runBookPolishFlow = useCallback(
+    (bookId: string, bookTitle: string, aggressiveness: EditAggressiveness, directives: string) => {
+      const goalId = `goal-polish-${Date.now()}`;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: goalId,
+          kind: 'goal',
+          goalId,
+          title: `Polishing — ${aggressiveness} pass`,
+          status: 'running',
+          actions: [
+            { id: 'act-audit', kind: 'search', label: 'Checking continuity', status: 'running' },
+            { id: 'act-line',  kind: 'write',  label: 'Line-editing', status: 'running' },
+            { id: 'act-copy',  kind: 'write',  label: 'Copy-editing', status: 'running' },
+          ],
+        },
+      ]);
+
+      const setAction = (actId: string, status: 'running' | 'done' | 'error') => {
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id !== goalId || m.kind !== 'goal') return m;
+            return {
+              ...m,
+              actions: m.actions.map((a) => (a.id === actId ? { ...a, status } : a)),
+            };
+          })
+        );
+      };
+      const finishGoal = (status: 'done' | 'error', summary?: string) => {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === goalId && m.kind === 'goal'
+              ? { ...m, status, summary: summary ?? m.summary }
+              : m
+          )
+        );
+      };
+
+      setLoading(true);
+
+      abortRef.current = streamBookPolish(
+        { bookId, aggressiveness, directives: directives || undefined, sessionId: serverSessionId ?? undefined },
+        {
+          onPipelineStarted() { /* goal already pushed */ },
+          onStageStarted(data) {
+            if (data.stage === 'audit') setAction('act-audit', 'running');
+            if (data.stage === 'line-edit') setAction('act-line', 'running');
+            if (data.stage === 'copy-edit') setAction('act-copy', 'running');
+          },
+          onStageComplete(data) {
+            if (data.status !== 'done') return;
+            if (data.stage === 'audit') setAction('act-audit', 'done');
+            if (data.stage === 'line-edit') setAction('act-line', 'done');
+            if (data.stage === 'copy-edit') setAction('act-copy', 'done');
+          },
+          onAuditIssuesReady(data) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: `audit-${Date.now()}`,
+                kind: 'audit-issues',
+                bookId,
+                bookTitle,
+                issues: data.issues,
+              },
+            ]);
+          },
+          onLineEditChapterDone({ n, wordCount }) {
+            // Live-update any existing audit-issues card so the `resolved`
+            // counter ticks up. The backend flips issues scoped to this
+            // chapter to resolved=true after the line-editor writes.
+            setMessages((prev) =>
+              prev.map((m) => {
+                if (m.kind !== 'audit-issues' || m.bookId !== bookId) return m;
+                return {
+                  ...m,
+                  issues: m.issues.map((issue) =>
+                    !issue.resolved && issue.chapterRange.includes(n)
+                      ? { ...issue, resolved: true }
+                      : issue
+                  ),
+                };
+              })
+            );
+            // Tick the stepper's sub-state — which chapter is at what pass.
+            void wordCount;
+          },
+          onCopyEditChapterDone() {
+            // No-op at top level — refreshStudioBook at pipeline_complete
+            // refreshes the ChaptersStrip status dots.
+          },
+          onPipelineComplete() {
+            finishGoal('done', `Polished — ${aggressiveness} aggressiveness applied.`);
+            refreshStudioBook();
+            setLoading(false);
+          },
+          onPipelineHalted(data) {
+            setAction(
+              data.pass === 'audit' ? 'act-audit' : data.pass === 'line-edit' ? 'act-line' : 'act-copy',
+              'error'
+            );
+            finishGoal('error', `Polish halted at ${data.pass}. You can retry that pass from the stepper.`);
+            setLoading(false);
+          },
+          onError(message) {
+            finishGoal('error');
+            setMessages((prev) => [
+              ...prev,
+              { id: `asst-err-${Date.now()}`, kind: 'assistant-text', content: message },
+            ]);
+            setLoading(false);
+          },
+        }
+      );
+    },
+    [serverSessionId, refreshStudioBook]
+  );
+
+  /**
+   * User clicked Light/Standard/Heavy + Continue on the aggressiveness picker.
+   * Flips card status and kicks off the Polish pipeline.
+   */
+  const handleAggressivenessContinue = useCallback(
+    (cardId: string, bookId: string, bookTitle: string, level: EditAggressiveness, directives: string) => {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === cardId && m.kind === 'aggressiveness-picker'
+            ? { ...m, status: 'answered-polish' as const, chosenAggressiveness: level }
+            : m
+        )
+      );
+      runBookPolishFlow(bookId, bookTitle, level, directives);
+    },
+    [runBookPolishFlow]
+  );
+
+  /** User clicked Skip editing on the aggressiveness picker. */
+  const handleAggressivenessSkip = useCallback(
+    (cardId: string) => {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === cardId && m.kind === 'aggressiveness-picker'
+            ? { ...m, status: 'answered-skip' as const }
+            : m
+        )
+      );
+      // No pipeline run — chapters stay at 'drafted'. Downstream stages
+      // (format/narrate) will fall back to drafted paths.
+    },
+    []
   );
 
   /**
@@ -3372,6 +3572,35 @@ export default function AIChatPage() {
                           )}
                         </div>
                       </div>
+                    );
+                  }
+                  if (msg.kind === 'aggressiveness-picker') {
+                    // Find the book title from the latest outline card for this bookId
+                    // so the Polish flow can pass it into the audit card's header.
+                    const outlineCard = [...messages].reverse().find(
+                      (m): m is Extract<ChatItem, { kind: 'book-outline' }> =>
+                        m.kind === 'book-outline' && m.bookId === msg.bookId
+                    );
+                    const title = outlineCard?.title ?? 'your book';
+                    return (
+                      <AggressivenessPickerCard
+                        key={msg.id}
+                        status={msg.status}
+                        chosenAggressiveness={msg.chosenAggressiveness}
+                        onContinue={(level, directives) =>
+                          handleAggressivenessContinue(msg.id, msg.bookId, title, level, directives)
+                        }
+                        onSkip={() => handleAggressivenessSkip(msg.id)}
+                      />
+                    );
+                  }
+                  if (msg.kind === 'audit-issues') {
+                    return (
+                      <AuditIssuesCard
+                        key={msg.id}
+                        bookTitle={msg.bookTitle}
+                        issues={msg.issues}
+                      />
                     );
                   }
                   if (msg.kind === 'book-approval') {

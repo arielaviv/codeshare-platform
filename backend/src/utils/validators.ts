@@ -267,6 +267,27 @@ export const approveBookSchema = z.object({
   meta: z.record(z.unknown()).optional(),
 });
 
+export const polishBookSchema = z.object({
+  bookId: z.string().min(1).max(64),
+  aggressiveness: z.enum(['light', 'standard', 'heavy']),
+  directives: z.string().max(1000).optional(),
+  skipAudit: z.boolean().optional(),
+  sessionId: z.string().optional(),
+});
+
+export const auditBookSchema = z.object({
+  bookId: z.string().min(1).max(64),
+  sessionId: z.string().optional(),
+});
+
+export const reEditChapterSchema = z.object({
+  bookId: z.string().min(1).max(64),
+  chapterN: z.number().int().min(1).max(100),
+  aggressiveness: z.enum(['light', 'standard', 'heavy']),
+  directives: z.string().max(1000).optional(),
+  sessionId: z.string().optional(),
+});
+
 export const acceptDeliverySchema = z.object({
   planId: z
     .string()
@@ -296,4 +317,7 @@ export type UpdateBookInput = z.infer<typeof updateBookSchema>;
 export type PlanBookInput = z.infer<typeof planBookSchema>;
 export type DraftBookInput = z.infer<typeof draftBookSchema>;
 export type ApproveBookInput = z.infer<typeof approveBookSchema>;
+export type PolishBookInput = z.infer<typeof polishBookSchema>;
+export type AuditBookInput = z.infer<typeof auditBookSchema>;
+export type ReEditChapterInput = z.infer<typeof reEditChapterSchema>;
 export type AcceptDeliveryInput = z.infer<typeof acceptDeliverySchema>;

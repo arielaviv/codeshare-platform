@@ -532,6 +532,45 @@ above. If you find one, rewrite the sentence — don't just swap the
 banned phrase for a synonym. The rhythm is the tell, not the word.`;
 
 // ---------------------------------------------------------------------------
+// 13. AUDIT CHECKLIST — Slice 5 Continuity Auditor. Defines what counts as
+// a flaggable inconsistency vs what's style judgment (out of scope).
+// ---------------------------------------------------------------------------
+
+export const MR8_AUDIT_CHECKLIST = `## CRAFT: AUDIT CHECKLIST
+
+You are auditing a drafted manuscript for objective, factual
+inconsistencies only. Do NOT rate style, voice, or quality — those are
+for the line editor. Do NOT suggest plot improvements. Stay strictly
+inside these categories:
+
+- CHARACTER NAMES that change spelling or form across chapters
+  (e.g. "Paul" in ch2, "Peter" in ch7 — clearly the same person).
+- TIMELINE contradictions: dates, ages, seasons, "three weeks later"
+  that doesn't line up with prior scene's end.
+- SETTING contradictions: same room described two different ways; a
+  building that has two stories in ch3 and four in ch9.
+- RELATIONSHIP / ROLE slips: "her brother" in one chapter, "her cousin"
+  in another.
+- PRONOUN referents that are ambiguous across chapter boundaries.
+- UNRESOLVED PLANTS: a promised payoff in an early chapter that never
+  fires by the end.
+- RESOLVED REVEALS: something "discovered" later that was already
+  explicitly stated earlier.
+- TONE JOLTS: a chapter breaking established voice without narrative
+  cause (a comic aside in a grief chapter with no setup).
+
+CAP: Return at most 12 issues. If there are ZERO, return an empty
+array — do NOT invent issues to fill the quota. Do NOT flag style,
+pacing, or "could be tighter" — none of that is this stage's job.
+
+For each issue, return exactly:
+  - kind: one of {character, timeline, setting, name, tone, continuity}
+  - chapterRange: integers (e.g. [3] or [2, 5, 7])
+  - description: ONE factual sentence
+  - suggestedFix: ONE sentence naming the SMALLEST edit that resolves it
+                  (prefer "change X to Y in chapter K" over "restructure")`;
+
+// ---------------------------------------------------------------------------
 // Conditional helper — consumers pass signals, get back the right concat.
 // ---------------------------------------------------------------------------
 
@@ -540,6 +579,7 @@ export interface CraftBibleInput {
   purpose:
     | 'outline'       // VOICE + UNIVERSAL_THEMES + FEMALE_ARCHETYPES?
     | 'chapter-draft' // VOICE + REPETITION + POLYSYNDETON + PREP + HOMOGRAPH + WHIMSICAL? + NO_LLM_TELLS
+    | 'audit'         // VOICE + AUDIT_CHECKLIST — continuity-only, no style
     | 'line-edit'     // VOICE + LINE_EDITING + REPETITION
     | 'copy-edit'     // GRAMMAR_GATE + HOMOGRAPH + TRANSITIONS
     | 'blurb'         // VOICE + LINE_EDITING
@@ -592,6 +632,12 @@ export function craftBibleFor(input: CraftBibleInput): string {
       if (isWhimsicalGenre(input.genre, input.tone)) sections.push(MR8_WHIMSICAL_WORDS);
       break;
 
+    case 'audit':
+      // Audit prompt is factual/continuity-only; voice preamble keeps the tone
+      // of the fix suggestions on-brand, and the checklist constrains scope.
+      sections.push(MR8_VOICE_PREAMBLE, MR8_AUDIT_CHECKLIST);
+      break;
+
     case 'line-edit':
       sections.push(MR8_VOICE_PREAMBLE, MR8_LINE_EDITING, MR8_REPETITION_TOOLKIT);
       break;
@@ -642,4 +688,5 @@ export const CRAFT_BIBLE = {
   FEMALE_ARCHETYPES: MR8_FEMALE_ARCHETYPES,
   UNIVERSAL_THEMES: MR8_UNIVERSAL_THEMES,
   NO_LLM_TELLS: MR8_NO_LLM_TELLS,
+  AUDIT_CHECKLIST: MR8_AUDIT_CHECKLIST,
 } as const;

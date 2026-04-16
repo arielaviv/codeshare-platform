@@ -22,6 +22,8 @@ import type { BookThemeSpec } from '../../../themes/book';
 import type { BookChapterRecord } from '../BookStudioPanel';
 import { getStaticBase } from '../../../lib/apiBase';
 import LiveReader, { type LiveReaderHandle } from '../LiveReader';
+import ReaderModeSegmented, { type ReaderMode } from '../ReaderModeSegmented';
+import api from '../../../services/api';
 
 interface BookShape {
   _id: string;
@@ -36,6 +38,7 @@ interface BookShape {
     genre: string;
     tone: string;
   };
+  chapters?: BookChapterRecord[];
   coverVariants?: Array<{
     idx: number;
     imageUrl: string;
@@ -101,6 +104,50 @@ export default function ChaptersSection({ book, activeChapter, theme, liveMode, 
     return list;
   }, [book.outline]);
 
+  // Reader Raw/Edited/Final toggle (Slice 5). Falls back down the chain if
+  // the requested mode's path doesn't exist for a given chapter — the server
+  // endpoint does the fallback and tells us which mode it served.
+  const chaptersWithPaths = book.chapters && book.chapters.length > 0 ? book.chapters : book.outline?.chapters ?? [];
+  const hasEdited = chaptersWithPaths.some((c) => Boolean(c.editedPath));
+  const hasFinal = chaptersWithPaths.some((c) => Boolean(c.proofedPath));
+  const [readerMode, setReaderMode] = useState<ReaderMode>('raw');
+
+  // Chapter prose cache — per (chapter N, mode) pair.
+  // Value is either the fetched text, 'loading', or 'error'.
+  type FetchState = { status: 'loading' } | { status: 'ok'; content: string; servedMode: ReaderMode } | { status: 'error'; message: string };
+  const [proseCache, setProseCache] = useState<Record<string, FetchState>>({});
+
+  // Fetch the active chapter's prose for the selected mode when needed.
+  useEffect(() => {
+    if (readerMode === 'raw') return; // raw mode uses beat placeholder; no fetch needed for static preview
+    if (!activeChapter) return;
+    const cacheKey = `${activeChapter.n}:${readerMode}`;
+    if (proseCache[cacheKey] && proseCache[cacheKey].status !== 'error') return;
+    setProseCache((prev) => ({ ...prev, [cacheKey]: { status: 'loading' } }));
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api.get<{ n: number; mode: ReaderMode; content: string }>(
+          `/books/${book._id}/chapter/${activeChapter.n}`,
+          { params: { mode: readerMode } }
+        );
+        if (cancelled) return;
+        setProseCache((prev) => ({
+          ...prev,
+          [cacheKey]: { status: 'ok', content: res.data.content, servedMode: res.data.mode },
+        }));
+      } catch (err) {
+        if (cancelled) return;
+        const message = err instanceof Error ? err.message : 'Failed to load chapter';
+        setProseCache((prev) => ({ ...prev, [cacheKey]: { status: 'error', message } }));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [readerMode, activeChapter, book._id, proseCache]);
+
   // Auto-scroll to the chapter that's selected in the sidebar.
   const [pageIndex, setPageIndex] = useState(0);
   useEffect(() => {
@@ -151,12 +198,46 @@ export default function ChaptersSection({ book, activeChapter, theme, liveMode, 
   const current = pages[pageIndex];
   const total = pages.length;
 
+  // What text should the active chapter-opener page render for its body?
+  // raw → beat placeholder (pre-draft stand-in)
+  // edited/final → fetched prose from sandbox (proofed/edited file)
+  const activeProseOverride = (() => {
+    if (readerMode === 'raw') return undefined;
+    if (current.kind !== 'chapter-opener' || current.chapterN === undefined) return undefined;
+    const cacheKey = `${current.chapterN}:${readerMode}`;
+    const state = proseCache[cacheKey];
+    if (!state) return undefined;
+    if (state.status === 'ok') return state.content;
+    return undefined;
+  })();
+  const activeProseLoading = (() => {
+    if (readerMode === 'raw') return false;
+    if (current.kind !== 'chapter-opener' || current.chapterN === undefined) return false;
+    const state = proseCache[`${current.chapterN}:${readerMode}`];
+    return state?.status === 'loading';
+  })();
+
   return (
     <div
       ref={rootRef}
       tabIndex={0}
       className="h-full outline-none flex flex-col items-center justify-center bg-[#EDE7DB] dark:bg-[#1A1814] px-4 py-6 gap-3"
     >
+      {/* Reader mode toggle — appears once at least one chapter has been edited/proofed. */}
+      {(hasEdited || hasFinal) && (
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <ReaderModeSegmented
+            mode={readerMode}
+            onChange={setReaderMode}
+            hasEdited={hasEdited}
+            hasFinal={hasFinal}
+          />
+          {activeProseLoading && (
+            <span className="text-[10px] text-ink-tertiary dark:text-[#666]">Loading…</span>
+          )}
+        </div>
+      )}
+
       <div
         className="flex-shrink-0 relative"
         style={{ perspective: '1600px' }}
@@ -174,6 +255,8 @@ export default function ChaptersSection({ book, activeChapter, theme, liveMode, 
               theme={theme}
               chapterN={current.chapterN}
               pageNumber={current.pageNumber}
+              proseOverride={activeProseOverride}
+              mode={readerMode}
             />
           )}
         </PageFrame>
@@ -387,14 +470,32 @@ function ChapterOpenerPage({
   theme,
   chapterN,
   pageNumber,
+  proseOverride,
+  mode = 'raw',
 }: {
   book: BookShape;
   theme: BookThemeSpec;
   chapterN: number;
   pageNumber?: number;
+  /** If provided, render this instead of the outline beat — used when
+   *  the Reader mode is edited/final and the fetched prose is available. */
+  proseOverride?: string;
+  mode?: ReaderMode;
 }): JSX.Element {
-  const ch = book.outline?.chapters.find((c) => c.n === chapterN);
+  const ch = book.outline?.chapters.find((c) => c.n === chapterN) ??
+    book.chapters?.find((c) => c.n === chapterN);
   if (!ch) return <div />;
+
+  const bodyParagraphs = useMemo(() => {
+    if (proseOverride && proseOverride.trim().length > 0) {
+      return proseOverride
+        .split(/\n{2,}/)
+        .map((p) => p.trim())
+        .filter((p) => p.length > 0);
+    }
+    return [renderBeatAsOpener(ch.beat)];
+  }, [proseOverride, ch.beat]);
+  const showBeatFooter = !proseOverride;
 
   return (
     <div className="h-full flex flex-col">
@@ -417,17 +518,26 @@ function ChapterOpenerPage({
           }}
         >
           Chapter {chapterN}
+          {mode !== 'raw' && (
+            <span className="ml-2 text-[0.85em] opacity-60">· {mode}</span>
+          )}
         </div>
         <h2 className="book-chapter-heading">
           {ch.title}
         </h2>
         <div className="book-body">
           <div className="book-chapter-body">
-            <p>{renderBeatAsOpener(ch.beat)}</p>
+            {bodyParagraphs.map((p, i) => (
+              <p key={i} style={{ marginBottom: '0.6em', textIndent: theme.firstLineIndentEm ? `${theme.firstLineIndentEm}em` : '0' }}>
+                {p}
+              </p>
+            ))}
           </div>
-          <div style={{ marginTop: '2em', textAlign: 'center', opacity: 0.55, fontSize: '0.85em', fontStyle: 'italic', fontFamily: theme.chapterHeadingFontFamily }}>
-            <span>— Mr8 will draft this chapter when you approve the outline —</span>
-          </div>
+          {showBeatFooter && (
+            <div style={{ marginTop: '2em', textAlign: 'center', opacity: 0.55, fontSize: '0.85em', fontStyle: 'italic', fontFamily: theme.chapterHeadingFontFamily }}>
+              <span>— Mr8 will draft this chapter when you approve the outline —</span>
+            </div>
+          )}
         </div>
       </div>
       {theme.pageNumberPosition !== 'none' && pageNumber !== undefined && (
