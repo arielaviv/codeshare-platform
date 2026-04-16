@@ -23,6 +23,8 @@ interface Props {
   exportRunning?: boolean;
   /** Disable the export button with a tooltip (e.g. "Draft chapters first"). */
   exportDisabledReason?: string;
+  /** Content edited since last export — show a stale-badge dot on Export. */
+  artifactsStale?: boolean;
 }
 
 export default function BookStudioToolbar({
@@ -34,6 +36,7 @@ export default function BookStudioToolbar({
   onExport,
   exportRunning,
   exportDisabledReason,
+  artifactsStale,
 }: Props): JSX.Element {
   const [localTitle, setLocalTitle] = useState(title);
   const [themeOpen, setThemeOpen] = useState(false);
@@ -168,27 +171,46 @@ export default function BookStudioToolbar({
         Private
       </ToolbarButton>
 
-      {/* Export — streams the Formatter (Slice 7.ii) */}
-      <ToolbarButton
-        onClick={onExport}
-        disabled={!onExport || Boolean(exportDisabledReason) || exportRunning}
-        title={
-          exportRunning
-            ? 'Formatting — PDF / EPUB / DOCX building now'
-            : exportDisabledReason ?? 'Build PDF / EPUB / DOCX'
-        }
-      >
-        {exportRunning ? (
-          <>
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="animate-spin">
-              <circle cx="12" cy="12" r="9" strokeDasharray="42 58" strokeLinecap="round" />
-            </svg>
-            Formatting…
-          </>
-        ) : (
-          'Export'
+      {/* Export — streams the Formatter + Bundler chain (Slice 7). */}
+      <div className="relative">
+        <ToolbarButton
+          onClick={onExport}
+          disabled={!onExport || Boolean(exportDisabledReason) || exportRunning}
+          title={
+            exportRunning
+              ? 'Formatting — PDF / EPUB / DOCX building now'
+              : exportDisabledReason ??
+                (artifactsStale
+                  ? 'Content edited since last build — Export will reformat first'
+                  : 'Build PDF / EPUB / DOCX + zip bundle')
+          }
+        >
+          {exportRunning ? (
+            <>
+              <svg
+                width="10"
+                height="10"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="3"
+                className="animate-spin"
+              >
+                <circle cx="12" cy="12" r="9" strokeDasharray="42 58" strokeLinecap="round" />
+              </svg>
+              Formatting…
+            </>
+          ) : (
+            'Export'
+          )}
+        </ToolbarButton>
+        {artifactsStale && !exportRunning && (
+          <span
+            className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-brand-orange ring-2 ring-white dark:ring-[#0A0A0A]"
+            aria-label="Content edited — reformat needed"
+          />
         )}
-      </ToolbarButton>
+      </div>
 
       {/* Read mode — disabled until chapters exist */}
       <ToolbarButton disabled title="Read mode (coming in Slice 4b)">

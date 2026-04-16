@@ -1,10 +1,10 @@
 /**
  * Segmented control switching the Studio's center pane between
- * Cover / Chapters / Downloads. Sticky under the stepper.
+ * Cover / Chapters / Edit / Downloads. Sticky under the stepper.
  */
-import { Image as ImageIcon, BookOpen, Download } from 'lucide-react';
+import { Image as ImageIcon, BookOpen, PenSquare, Download } from 'lucide-react';
 
-export type BookStudioSection = 'cover' | 'chapters' | 'downloads';
+export type BookStudioSection = 'cover' | 'chapters' | 'edit' | 'downloads';
 
 interface Props {
   section: BookStudioSection;
@@ -14,6 +14,7 @@ interface Props {
 const ITEMS: Array<{ id: BookStudioSection; label: string; icon: JSX.Element }> = [
   { id: 'cover', label: 'Cover', icon: <ImageIcon size={14} /> },
   { id: 'chapters', label: 'Chapters', icon: <BookOpen size={14} /> },
+  { id: 'edit', label: 'Edit', icon: <PenSquare size={14} /> },
   { id: 'downloads', label: 'Downloads', icon: <Download size={14} /> },
 ];
 

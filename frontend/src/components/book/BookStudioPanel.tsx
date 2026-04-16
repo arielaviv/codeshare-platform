@@ -31,6 +31,10 @@ import type { BookArtifactShape } from './sections/DownloadsSection';
 import { streamBookFormat } from '../../services/bookFormatStream';
 import { streamBookBundle } from '../../services/bookBundleStream';
 import BookReadyCard from './BookReadyCard';
+import EditSection from './sections/EditSection';
+import type { OutlineChapter } from './editor/OutlineEditor';
+import type { ProseVariant } from './editor/ChapterProseEditor';
+import type { MatterValue } from './editor/FrontBackMatterEditor';
 
 interface Props {
   bookId: string;
@@ -101,6 +105,12 @@ interface BookRecord {
   /** Every file the Formatter / Bundler produced (Slice 7+). */
   artifacts?: BookArtifactShape[];
   bundleUrl?: string;
+  /** Inline-editor fields (Slice 10j). */
+  bio?: string;
+  dedication?: string;
+  epigraph?: string;
+  acknowledgements?: string;
+  copyrightPageText?: string;
   status: string;
   updatedAt: string;
 }
@@ -175,7 +185,21 @@ export default function BookStudioPanel({ bookId, liveMode, liveReaderRef, initi
   // Persist PATCH updates (title, author, themeId) with a simple save-status
   // indicator that clears back to 'idle' after 1.5s of 'saved'.
   const patchBook = useCallback(
-    async (patch: Partial<Pick<BookRecord, 'title' | 'author' | 'themeId'>>) => {
+    async (
+      patch: Partial<
+        Pick<
+          BookRecord,
+          | 'title'
+          | 'author'
+          | 'themeId'
+          | 'bio'
+          | 'dedication'
+          | 'epigraph'
+          | 'acknowledgements'
+          | 'copyrightPageText'
+        >
+      >
+    ) => {
       if (!book) return;
       setSaveStatus('saving');
       setBook({ ...book, ...patch });
@@ -188,6 +212,96 @@ export default function BookStudioPanel({ bookId, liveMode, liveReaderRef, initi
       }
     },
     [book, bookId]
+  );
+
+  // Replace chapters array (Outline editor — reorder / rename / insert / delete).
+  const replaceChapters = useCallback(
+    async (chapters: OutlineChapter[]) => {
+      if (!book) return;
+      setSaveStatus('saving');
+      // Optimistic: rewrite the client copy with the new chapters.
+      setBook((prev) => {
+        if (!prev) return prev;
+        const outlineChapters = chapters.map((c) => ({
+          n: c.n,
+          title: c.title,
+          beat: c.beat,
+          estimatedWords: c.estimatedWords,
+        }));
+        return {
+          ...prev,
+          chapters: chapters.map((c) => ({
+            n: c.n,
+            title: c.title,
+            beat: c.beat,
+            estimatedWords: c.estimatedWords,
+            status: c.status,
+            draftPath: c.draftPath,
+            editedPath: c.editedPath,
+            proofedPath: c.proofedPath,
+            wordCount: c.wordCount,
+          })),
+          outline: prev.outline
+            ? { ...prev.outline, chapters: outlineChapters }
+            : prev.outline,
+        };
+      });
+      try {
+        await api.put(`/books/${bookId}/chapters`, { chapters });
+        setSaveStatus('saved');
+        setTimeout(() => setSaveStatus((s) => (s === 'saved' ? 'idle' : s)), 1500);
+      } catch {
+        setSaveStatus('error');
+      }
+    },
+    [book, bookId]
+  );
+
+  // Save one chapter's prose (ChapterProseEditor).
+  const saveChapterProse = useCallback(
+    async (n: number, variant: ProseVariant, text: string) => {
+      if (!book) return;
+      setSaveStatus('saving');
+      try {
+        await api.patch(`/books/${bookId}/chapter/${n}/prose`, { text, variant });
+        // Reflect the manual edit locally so the Stepper / Reader / Downloads
+        // can see an updated word count.
+        const wordCount = text.trim().match(/\S+/g)?.length ?? 0;
+        setBook((prev) => {
+          if (!prev || !prev.chapters) return prev;
+          return {
+            ...prev,
+            chapters: prev.chapters.map((c) =>
+              c.n === n ? { ...c, wordCount } : c
+            ),
+          };
+        });
+        setSaveStatus('saved');
+        setTimeout(() => setSaveStatus((s) => (s === 'saved' ? 'idle' : s)), 1500);
+      } catch {
+        setSaveStatus('error');
+      }
+    },
+    [book, bookId]
+  );
+
+  const matterPatch = useCallback(
+    async (patch: Partial<MatterValue>) => {
+      await patchBook(patch);
+    },
+    [patchBook]
+  );
+
+  const metadataPatch = useCallback(
+    async (patch: {
+      title?: string;
+      author?: string;
+      themeId?: BookThemeId;
+      bio?: string;
+    }) => {
+      await patchBook(patch);
+    },
+    [patchBook]
   );
 
   // Export chain state. A single click walks Format → Bundle → BookReadyCard,
@@ -209,6 +323,21 @@ export default function BookStudioPanel({ bookId, liveMode, liveReaderRef, initi
     : !exportReady
       ? 'Draft all chapters before exporting'
       : undefined;
+
+  // Whether the last build's artifacts are out of date relative to the book's
+  // most recent edit. Drives the toolbar's stale-badge + tooltip.
+  const artifactsStale = useMemo(() => {
+    if (!book) return false;
+    const arts = book.artifacts ?? [];
+    if (arts.length === 0) return false;
+    const lastBuild = arts.reduce<number>((max, a) => {
+      const t = a.builtAt ? new Date(a.builtAt).getTime() : 0;
+      return Number.isFinite(t) && t > max ? t : max;
+    }, 0);
+    if (lastBuild === 0) return false;
+    const bookUpdated = new Date(book.updatedAt).getTime();
+    return bookUpdated > lastBuild;
+  }, [book]);
 
   const appendArtifact = useCallback(
     (a: { kind: BookArtifactShape['kind']; url: string; sizeBytes: number }) => {
@@ -270,13 +399,24 @@ export default function BookStudioPanel({ bookId, liveMode, liveReaderRef, initi
     setExportRunning(true);
     setBookReady(null);
 
-    // Fast path — PDF + EPUB + DOCX already built: skip format, bundle directly.
+    // Fast path — PDF + EPUB + DOCX already built AND content has NOT been
+    // edited since the last build: skip format, bundle directly. If the user
+    // edited prose, chapter order, metadata, or front/back matter after the
+    // artifacts were built, we fall through to a fresh format so the bundle
+    // reflects the current state.
     const artifacts = book.artifacts ?? [];
     const hasCore =
       artifacts.some((a) => a.kind === 'pdf') &&
       artifacts.some((a) => a.kind === 'epub') &&
       artifacts.some((a) => a.kind === 'docx');
-    if (hasCore) {
+    const lastBuild = artifacts.reduce<number>((max, a) => {
+      const t = a.builtAt ? new Date(a.builtAt).getTime() : 0;
+      return Number.isFinite(t) && t > max ? t : max;
+    }, 0);
+    const bookUpdated = new Date(book.updatedAt).getTime();
+    const stale = lastBuild > 0 && bookUpdated > lastBuild;
+
+    if (hasCore && !stale) {
       runBundleStage(book._id);
       return;
     }
@@ -373,6 +513,7 @@ export default function BookStudioPanel({ bookId, liveMode, liveReaderRef, initi
         onExport={startExport}
         exportRunning={exportRunning}
         exportDisabledReason={exportDisabledReason}
+        artifactsStale={artifactsStale}
       />
       {bookReady && (
         <div
@@ -401,46 +542,74 @@ export default function BookStudioPanel({ bookId, liveMode, liveReaderRef, initi
       )}
       <BookStageStepper book={book} />
       <div className="flex-1 min-h-0 flex">
-        <ChaptersStrip
-          chapters={chapters}
-          activeChapterN={activeChapterN}
-          onSelect={setActiveChapterN}
-        />
+        {section !== 'edit' && (
+          <ChaptersStrip
+            chapters={chapters}
+            activeChapterN={activeChapterN}
+            onSelect={setActiveChapterN}
+          />
+        )}
         <div className="flex-1 min-w-0 flex flex-col">
           <BookStudioSegmented section={section} onChange={setSection} />
-          <div className="flex-1 min-h-0 overflow-auto bg-white dark:bg-[#0A0A0A]">
-            {section === 'cover' && (
-              <CoverSection
-                bookId={book._id}
-                title={book.title}
-                author={book.author}
-                cells={coverCells}
-                selectedIdx={book.selectedCoverIdx}
-                theme={theme}
-              />
-            )}
-            {section === 'chapters' && (
-              <ChaptersSection
-                book={book}
-                activeChapter={activeChapter}
-                theme={theme}
-                liveMode={liveMode}
-                liveReaderRef={liveReaderRef}
-              />
-            )}
-            {section === 'downloads' && (
-              <DownloadsSection book={book} />
-            )}
-          </div>
+          {section === 'edit' ? (
+            <EditSection
+              book={{
+                _id: book._id,
+                title: book.title,
+                author: book.author,
+                themeId: book.themeId,
+                bio: book.bio,
+                dedication: book.dedication,
+                epigraph: book.epigraph,
+                acknowledgements: book.acknowledgements,
+                copyrightPageText: book.copyrightPageText,
+                chapters: book.chapters as OutlineChapter[] | undefined,
+                outline: book.outline
+                  ? { chapters: book.outline.chapters as OutlineChapter[] }
+                  : undefined,
+              }}
+              activeChapterN={activeChapterN}
+              onActiveChapterChange={setActiveChapterN}
+              onMetadataPatch={metadataPatch}
+              onMatterPatch={matterPatch}
+              onChaptersReplace={replaceChapters}
+              onChapterProseSave={saveChapterProse}
+            />
+          ) : (
+            <div className="flex-1 min-h-0 overflow-auto bg-white dark:bg-[#0A0A0A]">
+              {section === 'cover' && (
+                <CoverSection
+                  bookId={book._id}
+                  title={book.title}
+                  author={book.author}
+                  cells={coverCells}
+                  selectedIdx={book.selectedCoverIdx}
+                  theme={theme}
+                />
+              )}
+              {section === 'chapters' && (
+                <ChaptersSection
+                  book={book}
+                  activeChapter={activeChapter}
+                  theme={theme}
+                  liveMode={liveMode}
+                  liveReaderRef={liveReaderRef}
+                />
+              )}
+              {section === 'downloads' && <DownloadsSection book={book} />}
+            </div>
+          )}
         </div>
-        <BookPropertiesPanel
-          book={book}
-          section={section}
-          activeChapter={activeChapter}
-          selectedCover={selectedCover}
-          theme={theme}
-          onAuthorChange={(a) => patchBook({ author: a })}
-        />
+        {section !== 'edit' && (
+          <BookPropertiesPanel
+            book={book}
+            section={section}
+            activeChapter={activeChapter}
+            selectedCover={selectedCover}
+            theme={theme}
+            onAuthorChange={(a) => patchBook({ author: a })}
+          />
+        )}
       </div>
     </div>
   );
