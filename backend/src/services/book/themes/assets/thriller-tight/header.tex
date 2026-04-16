@@ -1,0 +1,35 @@
+%% Thriller Tight — Inter throughout. Dense pages, stark numeric opener,
+%% no drop caps, em-dash scene breaks.
+
+\newfontfamily\chapterfont{Inter}
+
+%% Chapter opener — oversized numeric, all-caps title below. Zero warmth.
+\titleformat{\chapter}[display]
+  {\normalfont\chapterfont\filleft}
+  {\normalfont\chapterfont\fontsize{96pt}{96pt}\selectfont\bfseries\thechapter}
+  {0.4em}
+  {\chapterfont\large\bfseries\MakeUppercase}
+\titlespacing*{\chapter}{0pt}{24pt}{36pt}
+
+%% No drop caps for Thriller — reset counter to inert value.
+\setcounter{DefaultLines}{1}
+
+%% Scene break — bold em-dash.
+\renewcommand{\sceneBreakSymbol}{\chapterfont\bfseries\normalsize\textemdash\textemdash}
+
+%% Running heads — Author / Chapter. Folios outer footer. All sans.
+\makeatletter
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[LE]{\footnotesize\chapterfont\MakeUppercase{\@author}}
+\fancyhead[RO]{\footnotesize\chapterfont\nouppercase{\leftmark}}
+\fancyfoot[LE,RO]{\chapterfont\small\thepage}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\chaptermark}[1]{\markboth{#1}{}}
+\makeatother
+
+\fancypagestyle{plain}{%
+  \fancyhf{}%
+  \fancyfoot[LE,RO]{\chapterfont\small\thepage}%
+  \renewcommand{\headrulewidth}{0pt}%
+}

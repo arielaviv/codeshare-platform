@@ -1,0 +1,64 @@
+/* Non-Fiction Clean — Source Sans 3 body, Inter headings, block paragraphs. */
+
+@font-face {
+  font-family: "Source Sans 3";
+  src: local("Source Sans 3"),
+       url("https://fonts.gstatic.com/s/sourcesans3/v15/nwpBtKy2OAdR1K-IwhWudF-R9QMylBJAV3Bo.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Inter";
+  src: local("Inter"),
+       url("https://fonts.gstatic.com/s/inter/v13/UcCO3FwrK3iLTeHuS_fvQtMwCp50KnMa1ZL7.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+}
+
+body {
+  font-family: "Source Sans 3", "Helvetica Neue", sans-serif;
+  font-size: 1em;
+  line-height: 1.55;
+  text-align: left;
+  hyphens: auto;
+  margin: 1em 1em;
+}
+
+p {
+  margin: 0 0 0.6em 0;
+  text-indent: 0;
+}
+
+h1, h2, h3 {
+  font-family: "Inter", system-ui, sans-serif;
+  font-weight: 700;
+  text-align: left;
+  page-break-before: always;
+  page-break-after: avoid;
+  margin-top: 2.4em;
+  margin-bottom: 0.8em;
+  letter-spacing: -0.01em;
+}
+
+h1 { font-size: 2em; color: #0B1220; }
+h2 {
+  font-size: 0.82em;
+  color: #1D4ED8;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-weight: 700;
+  margin-bottom: 0.4em;
+  page-break-before: auto;
+}
+h3 { font-size: 1.2em; color: #0B1220; }
+
+hr {
+  border: none;
+  text-align: center;
+  margin: 1.2em 0;
+}
+hr::after {
+  content: "\2014\202F\2014";
+  font-family: "Inter", sans-serif;
+  color: #0B1220;
+}

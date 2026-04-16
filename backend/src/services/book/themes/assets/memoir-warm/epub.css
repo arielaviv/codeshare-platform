@@ -1,0 +1,81 @@
+/* Memoir Warm — Crimson Pro throughout, vintage warm paper feel. */
+
+@font-face {
+  font-family: "Crimson Pro";
+  src: local("Crimson Pro"),
+       url("https://fonts.gstatic.com/s/crimsonpro/v24/q5uDsoa5M_tv7IihmnkabAReu49Y_Bo-HVKMBi4.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Crimson Pro";
+  src: local("Crimson Pro Italic"),
+       url("https://fonts.gstatic.com/s/crimsonpro/v24/q5uSsoa5M_tv7IihmnkabC5XiXCAlXGks1WZzm18OQ.ttf") format("truetype");
+  font-weight: 400;
+  font-style: italic;
+}
+
+body {
+  font-family: "Crimson Pro", Georgia, serif;
+  font-size: 1.05em;
+  line-height: 1.55;
+  text-align: justify;
+  hyphens: auto;
+  margin: 1em 1em;
+  color: #2A1F16;
+  background: #F6F0E4;
+}
+
+p {
+  margin: 0;
+  text-indent: 1em;
+}
+
+p.no-indent,
+h1 + p,
+h2 + p,
+.chapter-opener + p {
+  text-indent: 0;
+}
+
+h1, h2 {
+  font-family: "Crimson Pro", Georgia, serif;
+  font-weight: 600;
+  font-style: italic;
+  text-align: right;
+  page-break-before: always;
+  page-break-after: avoid;
+  margin-top: 3em;
+  margin-bottom: 1.4em;
+  font-variant: small-caps;
+  letter-spacing: 0.05em;
+}
+
+h1 { font-size: 2.2em; }
+h2 { font-size: 1em; color: #7A3B2E; font-weight: 400; }
+
+/* 2-line drop cap, accent-colored italic. */
+h1 + p::first-letter,
+h2 + p::first-letter,
+.chapter-opener + p::first-letter {
+  font-family: "Crimson Pro", Georgia, serif;
+  font-size: 2.8em;
+  line-height: 0.9;
+  font-style: italic;
+  font-weight: 600;
+  float: left;
+  padding: 0.05em 0.1em 0 0;
+  color: #7A3B2E;
+}
+
+hr {
+  border: none;
+  text-align: center;
+  margin: 1.3em 0;
+}
+hr::after {
+  content: "\00B7 \2003 \00B7 \2003 \00B7";
+  font-family: "Crimson Pro", Georgia, serif;
+  font-style: italic;
+  color: #7A3B2E;
+}

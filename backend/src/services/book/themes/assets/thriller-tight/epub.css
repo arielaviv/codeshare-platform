@@ -1,0 +1,67 @@
+/* Thriller — Inter throughout. Dense, stark, no drop caps. */
+
+@font-face {
+  font-family: "Inter";
+  src: local("Inter"),
+       url("https://fonts.gstatic.com/s/inter/v13/UcCO3FwrK3iLTeHuS_fvQtMwCp50KnMa1ZL7.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Inter";
+  src: local("Inter Bold"),
+       url("https://fonts.gstatic.com/s/inter/v13/UcCO3FwrK3iLTeHuS_fvQtMwCp50KnMa1xL7.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+}
+
+body {
+  font-family: "Inter", "Helvetica Neue", sans-serif;
+  font-size: 0.95em;
+  line-height: 1.35;
+  text-align: left;
+  hyphens: auto;
+  margin: 1em 1em;
+}
+
+p {
+  margin: 0;
+  text-indent: 1em;
+}
+
+p.no-indent,
+h1 + p,
+h2 + p,
+.chapter-opener + p {
+  text-indent: 0;
+}
+
+h1, h2 {
+  font-family: "Inter", sans-serif;
+  font-weight: 900;
+  text-align: left;
+  page-break-before: always;
+  page-break-after: avoid;
+  margin-top: 2em;
+  margin-bottom: 1em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #0C0C0F;
+}
+
+h1 { font-size: 4em; line-height: 1; }
+h2 { font-size: 1.1em; color: #C9242B; }
+
+/* No drop caps for thriller — tight pages, every line counts. */
+
+hr {
+  border: none;
+  text-align: center;
+  margin: 1em 0;
+}
+hr::after {
+  content: "\2014\2014";
+  font-family: "Inter", sans-serif;
+  font-weight: 700;
+  color: #0C0C0F;
+}

@@ -1,0 +1,36 @@
+%% Children's Warm — Fraunces body + Fraunces chapter headings.
+%% Large type, playful colored bold opener, 3-line drop caps, star break.
+
+\newfontfamily\chapterfont{Fraunces}
+
+%% Children's accent color.
+\definecolor{childrenAccent}{HTML}{E07A2F}
+
+%% Chapter opener — colored bold, centered, oversized title.
+\titleformat{\chapter}[display]
+  {\normalfont\chapterfont\filcenter}
+  {\color{childrenAccent}\Large\bfseries Chapter \thechapter}
+  {0.6em}
+  {\chapterfont\Huge\bfseries}
+\titlespacing*{\chapter}{0pt}{48pt}{36pt}
+
+%% Drop cap — 3-line raised, accent color.
+\renewcommand{\DefaultLoversize}{0.18}
+\renewcommand{\DefaultLraise}{0.05}
+\setcounter{DefaultLines}{3}
+\renewcommand{\LettrineFontHook}{\color{childrenAccent}\chapterfont\bfseries}
+
+%% Scene break — solid star.
+\renewcommand{\sceneBreakSymbol}{\color{childrenAccent}\large$\bigstar$}
+
+%% No running heads — clean pages for younger readers. Centered folios.
+\pagestyle{fancy}
+\fancyhf{}
+\fancyfoot[C]{\chapterfont\thepage}
+\renewcommand{\headrulewidth}{0pt}
+
+\fancypagestyle{plain}{%
+  \fancyhf{}%
+  \fancyfoot[C]{\chapterfont\thepage}%
+  \renewcommand{\headrulewidth}{0pt}%
+}

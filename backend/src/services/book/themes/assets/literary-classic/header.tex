@@ -1,0 +1,37 @@
+%% Literary Classic — EB Garamond body + Playfair Display chapter headings.
+%% Centered small-caps opener, 3-line drop caps, triple-dot scene break.
+
+\newfontfamily\chapterfont{Playfair Display}
+
+%% Chapter opener — centered, small-caps, editorial.
+\titleformat{\chapter}[display]
+  {\normalfont\chapterfont\LARGE\scshape\filcenter}
+  {\normalsize\scshape\chaptertitlename\ \thechapter}
+  {1.2em}
+  {\Huge\itshape}
+\titlespacing*{\chapter}{0pt}{48pt}{36pt}
+
+%% Drop cap tuning — 3-line raised lettrine for chapter-opening paragraphs.
+\renewcommand{\DefaultLoversize}{0.15}
+\renewcommand{\DefaultLraise}{0.02}
+\setcounter{DefaultLines}{3}
+
+%% Scene break ornament — three spaced middle dots.
+\renewcommand{\sceneBreakSymbol}{\chapterfont\large\textperiodcentered\kern0.9em\textperiodcentered\kern0.9em\textperiodcentered}
+
+%% Running heads — title on verso, chapter on recto; page number centered.
+\makeatletter
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[LE]{\small\itshape\@title}
+\fancyhead[RO]{\small\itshape\nouppercase{\leftmark}}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\chaptermark}[1]{\markboth{#1}{}}
+\makeatother
+
+\fancypagestyle{plain}{%
+  \fancyhf{}%
+  \fancyfoot[C]{\thepage}%
+  \renewcommand{\headrulewidth}{0pt}%
+}

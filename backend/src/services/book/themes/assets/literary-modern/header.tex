@@ -1,0 +1,37 @@
+%% Literary Modern — Source Serif Pro body + Inter sans chapter headings.
+%% Left-tight opener, 2-line drop caps, diamond scene break.
+
+\newfontfamily\chapterfont{Inter}[UprightFeatures={Numbers=OldStyle}]
+
+%% Chapter opener — left-aligned, bold sans, numeric chapter label stacked.
+\titleformat{\chapter}[display]
+  {\normalfont\chapterfont\filright}
+  {\normalfont\chapterfont\footnotesize\bfseries\MakeUppercase{Chapter \thechapter}}
+  {0.8em}
+  {\huge\bfseries\chapterfont}
+\titlespacing*{\chapter}{0pt}{42pt}{30pt}
+
+%% Drop cap — 2-line raised.
+\renewcommand{\DefaultLoversize}{0.12}
+\renewcommand{\DefaultLraise}{0.0}
+\setcounter{DefaultLines}{2}
+
+%% Scene break — single diamond, muted.
+\renewcommand{\sceneBreakSymbol}{\textcolor[HTML]{2E4B6B}{\normalsize$\blacklozenge$}}
+
+%% Running heads — title verso, chapter recto. Folios in outer footer.
+\makeatletter
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[LE]{\footnotesize\chapterfont\MakeUppercase{\@title}}
+\fancyhead[RO]{\footnotesize\chapterfont\nouppercase{\leftmark}}
+\fancyfoot[LE,RO]{\chapterfont\thepage}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\chaptermark}[1]{\markboth{#1}{}}
+\makeatother
+
+\fancypagestyle{plain}{%
+  \fancyhf{}%
+  \fancyfoot[LE,RO]{\chapterfont\thepage}%
+  \renewcommand{\headrulewidth}{0pt}%
+}

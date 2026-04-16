@@ -1,0 +1,75 @@
+/* Children's Warm — Fraunces throughout, generous spacing, star breaks. */
+
+@font-face {
+  font-family: "Fraunces";
+  src: local("Fraunces"),
+       url("https://fonts.gstatic.com/s/fraunces/v32/6NUh8FyLNQOQZAnv9bYEvDiIdE9Ea92uemAk.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Fraunces";
+  src: local("Fraunces Bold"),
+       url("https://fonts.gstatic.com/s/fraunces/v32/6NUh8FyLNQOQZAnv9bYEvDiIdE9Ea92uemAk.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+}
+
+body {
+  font-family: "Fraunces", Georgia, serif;
+  font-size: 1.15em;
+  line-height: 1.6;
+  text-align: left;
+  hyphens: manual;
+  margin: 1em 1em;
+}
+
+p {
+  margin: 0 0 0.35em 0;
+  text-indent: 0;
+}
+
+h1, h2 {
+  font-family: "Fraunces", Georgia, serif;
+  font-weight: 900;
+  text-align: center;
+  page-break-before: always;
+  page-break-after: avoid;
+  margin-top: 2.5em;
+  margin-bottom: 1em;
+}
+
+h1 {
+  font-size: 2.4em;
+  color: #1F2937;
+}
+h2 {
+  font-size: 1em;
+  color: #E07A2F;
+  text-transform: none;
+  font-weight: 700;
+}
+
+/* 3-line drop cap, accent-colored. */
+h1 + p::first-letter,
+h2 + p::first-letter,
+.chapter-opener + p::first-letter {
+  font-family: "Fraunces", Georgia, serif;
+  font-size: 3.5em;
+  line-height: 0.9;
+  font-weight: 900;
+  float: left;
+  padding: 0.05em 0.12em 0 0;
+  color: #E07A2F;
+}
+
+hr {
+  border: none;
+  text-align: center;
+  margin: 1.4em 0;
+}
+hr::after {
+  content: "\2605";
+  font-size: 1.2em;
+  color: #E07A2F;
+}

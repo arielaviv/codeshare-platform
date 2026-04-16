@@ -1,0 +1,85 @@
+/* Literary Classic — EB Garamond body, Playfair Display chapter titles. */
+
+@font-face {
+  font-family: "EB Garamond";
+  src: local("EB Garamond"),
+       url("https://fonts.gstatic.com/s/ebgaramond/v27/SlGDmQSNjdsmc35JDF1K5FRyRQ.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+}
+@font-face {
+  font-family: "EB Garamond";
+  src: local("EB Garamond Italic"),
+       url("https://fonts.gstatic.com/s/ebgaramond/v27/SlGFmQSNjdsmc35JDF1K5GRwQDEuJw.ttf") format("truetype");
+  font-weight: 400;
+  font-style: italic;
+}
+@font-face {
+  font-family: "Playfair Display";
+  src: local("Playfair Display"),
+       url("https://fonts.gstatic.com/s/playfairdisplay/v37/nuFvD-vYSZviVYUb_rj3ij__anPXJzDwcbmjWBN2PKdFvUDQ.ttf") format("truetype");
+  font-weight: 600;
+  font-style: normal;
+}
+
+body {
+  font-family: "EB Garamond", Garamond, "Times New Roman", serif;
+  font-size: 1em;
+  line-height: 1.5;
+  text-align: justify;
+  hyphens: auto;
+  margin: 1em 1em;
+}
+
+p {
+  margin: 0;
+  text-indent: 1em;
+}
+
+p.no-indent,
+h1 + p,
+h2 + p,
+.chapter-opener + p {
+  text-indent: 0;
+}
+
+h1, h2, h3 {
+  font-family: "Playfair Display", Garamond, serif;
+  font-weight: 600;
+  text-align: center;
+  page-break-before: always;
+  page-break-after: avoid;
+  margin-top: 3em;
+  margin-bottom: 1.5em;
+  font-variant: small-caps;
+  letter-spacing: 0.06em;
+}
+
+h1 { font-size: 2em; font-style: italic; }
+h2 { font-size: 1.5em; }
+
+/* 3-line drop cap on the first paragraph after a chapter heading. */
+h1 + p::first-letter,
+h2 + p::first-letter,
+.chapter-opener + p::first-letter {
+  font-family: "Playfair Display", serif;
+  font-size: 3.2em;
+  line-height: 0.9;
+  font-weight: 600;
+  float: left;
+  padding: 0.05em 0.08em 0 0;
+  margin-right: 0.02em;
+}
+
+hr {
+  border: none;
+  text-align: center;
+  margin: 1.2em 0;
+}
+hr::after {
+  content: "\00B7 \00A0 \00A0 \00B7 \00A0 \00A0 \00B7";
+  font-family: "Playfair Display", serif;
+  font-size: 1em;
+  letter-spacing: 0.4em;
+  color: #2a2115;
+}

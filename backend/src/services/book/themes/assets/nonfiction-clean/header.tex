@@ -1,0 +1,38 @@
+%% Non-Fiction Clean — Source Sans 3 body + Inter chapter headings.
+%% Left-tight opener, no drop caps, em-dash scene break. Crisp, utilitarian.
+
+\newfontfamily\chapterfont{Inter}
+
+%% Non-fiction accent — editorial blue.
+\definecolor{nfAccent}{HTML}{1D4ED8}
+
+%% Chapter opener — left-aligned, colored label, large bold title.
+\titleformat{\chapter}[display]
+  {\normalfont\chapterfont\filright}
+  {\color{nfAccent}\footnotesize\chapterfont\bfseries\MakeUppercase{Chapter \thechapter}}
+  {0.6em}
+  {\chapterfont\huge\bfseries}
+\titlespacing*{\chapter}{0pt}{36pt}{28pt}
+
+%% No drop caps — non-fiction reads better block-style.
+\setcounter{DefaultLines}{1}
+
+%% Scene break — em-dash pair.
+\renewcommand{\sceneBreakSymbol}{\chapterfont\normalsize\textemdash\,\textemdash}
+
+%% Running heads — title verso, chapter recto. Folios outer.
+\makeatletter
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[LE]{\footnotesize\chapterfont\MakeUppercase{\@title}}
+\fancyhead[RO]{\footnotesize\chapterfont\nouppercase{\leftmark}}
+\fancyfoot[LE,RO]{\chapterfont\small\thepage}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\chaptermark}[1]{\markboth{#1}{}}
+\makeatother
+
+\fancypagestyle{plain}{%
+  \fancyhf{}%
+  \fancyfoot[LE,RO]{\chapterfont\small\thepage}%
+  \renewcommand{\headrulewidth}{0pt}%
+}

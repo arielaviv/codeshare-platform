@@ -1,0 +1,93 @@
+%% Mr8 Book — shared pandoc LaTeX template (Slice 7).
+%%
+%% Used by the Formatter service: all 6 themes share this template and
+%% inject theme-specific behavior via `-H themes/<id>/header.tex`. The
+%% Formatter also passes `-V mainfont=...`, `-V sansfont=...`,
+%% `-V geometry:paperwidth=...`, `-V title=...`, `-V author=...`.
+%%
+%% Everything theme-specific (chapter opener style, drop caps, scene break
+%% ornament, running heads) is defined or redefined in `<theme>/header.tex`.
+
+\documentclass[$if(fontsize)$$fontsize$,$endif$openright,twoside]{book}
+
+\usepackage{amsmath,amssymb}
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+\else
+  \usepackage{fontspec}
+  \defaultfontfeatures{Ligatures=TeX}
+  $if(mainfont)$\setmainfont{$mainfont$}$endif$
+  $if(sansfont)$\setsansfont{$sansfont$}$endif$
+  $if(monofont)$\setmonofont{$monofont$}$endif$
+\fi
+
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{lettrine}
+\usepackage{titlesec}
+\usepackage{titling}
+\usepackage{fancyhdr}
+\usepackage[table]{xcolor}
+\usepackage[$if(geometry)$$geometry$$else$paperwidth=6in,paperheight=9in,top=0.75in,bottom=1in,inner=1in,outer=0.75in$endif$]{geometry}
+\usepackage[unicode,bookmarks=true,bookmarksnumbered=false,pdfstartview=]{hyperref}
+\hypersetup{hidelinks,pdftitle={$title$},pdfauthor={$author$}}
+
+\setlength{\parindent}{$if(parindent)$$parindent$$else$1em$endif$}
+\setlength{\parskip}{0pt}
+
+%% Professional book typography — prevent widows/orphans.
+\clubpenalty=10000
+\widowpenalty=10000
+\displaywidowpenalty=10000
+\raggedbottom
+
+%% Pandoc compatibility macros.
+\providecommand{\tightlist}{\setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\providecommand{\passthrough}[1]{#1}
+
+%% Scene break — per-theme header.tex overrides \sceneBreakSymbol.
+%% The Formatter pre-processes markdown to emit `\sceneBreak` in place of `***`.
+\providecommand{\sceneBreakSymbol}{$\ast\ \ast\ \ast$}
+\providecommand{\sceneBreak}{%
+  \nopagebreak[4]\par\vspace{0.6\baselineskip}%
+  {\centering\sceneBreakSymbol\par}%
+  \vspace{0.6\baselineskip}\nopagebreak[4]%
+}
+
+%% Per-theme overrides (chapter opener, drop caps, running heads, fonts).
+$for(header-includes)$
+$header-includes$
+$endfor$
+
+\title{$title$}
+\author{$author$}
+
+\begin{document}
+
+$if(title)$
+\thispagestyle{empty}
+\begin{titlepage}
+  \vspace*{\fill}
+  \begin{center}
+    {\Huge\bfseries $title$\par}
+    $if(author)$\vspace{1.2em}{\Large $author$\par}$endif$
+  \end{center}
+  \vspace*{\fill}
+\end{titlepage}
+\clearpage
+$endif$
+
+$if(toc)$
+\frontmatter
+\pagestyle{plain}
+\tableofcontents
+\clearpage
+$endif$
+
+\mainmatter
+
+$body$
+
+\end{document}

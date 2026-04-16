@@ -1,0 +1,75 @@
+/* Literary Modern — Source Serif Pro body + Inter chapter titles. */
+
+@font-face {
+  font-family: "Source Serif Pro";
+  src: local("Source Serif Pro"),
+       url("https://fonts.gstatic.com/s/sourceserifpro/v15/neIQzD-0qpwxpaWvjeD0X88SAOeauXY-pw.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Inter";
+  src: local("Inter"),
+       url("https://fonts.gstatic.com/s/inter/v13/UcCO3FwrK3iLTeHuS_fvQtMwCp50KnMa1ZL7.ttf") format("truetype");
+  font-weight: 600;
+  font-style: normal;
+}
+
+body {
+  font-family: "Source Serif Pro", Georgia, serif;
+  font-size: 1em;
+  line-height: 1.45;
+  text-align: justify;
+  hyphens: auto;
+  margin: 1em 1em;
+}
+
+p {
+  margin: 0;
+  text-indent: 1em;
+}
+
+p.no-indent,
+h1 + p,
+h2 + p,
+.chapter-opener + p {
+  text-indent: 0;
+}
+
+h1, h2 {
+  font-family: "Inter", system-ui, sans-serif;
+  font-weight: 700;
+  text-align: left;
+  page-break-before: always;
+  page-break-after: avoid;
+  margin-top: 2.8em;
+  margin-bottom: 1.2em;
+  letter-spacing: 0.02em;
+}
+
+h1 { font-size: 1.9em; }
+h2 { font-size: 1.35em; text-transform: uppercase; font-size: 0.85em; letter-spacing: 0.18em; color: #2E4B6B; }
+
+/* 2-line drop cap. */
+h1 + p::first-letter,
+h2 + p::first-letter,
+.chapter-opener + p::first-letter {
+  font-family: "Inter", sans-serif;
+  font-size: 2.5em;
+  line-height: 0.95;
+  font-weight: 900;
+  float: left;
+  padding: 0.05em 0.08em 0 0;
+  color: #2E4B6B;
+}
+
+hr {
+  border: none;
+  text-align: center;
+  margin: 1.2em 0;
+  color: #2E4B6B;
+}
+hr::after {
+  content: "\2756";
+  font-size: 0.9em;
+}

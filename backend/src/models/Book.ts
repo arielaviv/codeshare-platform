@@ -6,6 +6,7 @@ export type BookStatus =
   | 'outline-ready'
   | 'drafting'
   | 'editing'
+  | 'formatting'
   | 'cover-pending'
   | 'cover-ready'
   | 'narrating'
@@ -13,6 +14,70 @@ export type BookStatus =
   | 'bundling'
   | 'done'
   | 'error';
+
+/**
+ * Physical trim size (KDP/IngramSpark). `themes/index.ts` specifies a default
+ * per theme; `IBookProduction.trimSize` is the user's override (stored on the
+ * book so re-formatting is deterministic).
+ */
+export type BookTrimSize = '5x8' | '5.5x8.5' | '6x9';
+
+/**
+ * Export format; controls which pandoc targets the Formatter (Slice 7) runs.
+ */
+export type BookExportFormat = 'pdf' | 'epub' | 'docx';
+
+/**
+ * Translation targets for Slice 9. v1 ships ES + FR only; RTL
+ * (Arabic/Hebrew) is v2 — see decision log in the master plan.
+ */
+export type BookTranslationLanguage = 'es' | 'fr';
+
+/**
+ * Every file the Formatter / Bundler writes gets an entry here. The Studio's
+ * Downloads section renders rows from this array, and the bundle zip step
+ * (Slice 7.iii) picks them up by `kind` + `lang`. Translation re-runs
+ * (Slice 9) push their own PDF/EPUB rows with `lang: 'es' | 'fr'`.
+ */
+export type BookArtifactKind =
+  | 'pdf'
+  | 'epub'
+  | 'docx'
+  | 'cover-wrap-paperback'
+  | 'cover-wrap-hardcover'
+  | 'cover-for-epub'
+  | 'copyright-cert'
+  | 'kdp-guide'
+  | 'bundle-zip'
+  | 'audiobook'
+  | 'translation-pdf'
+  | 'translation-epub';
+
+export interface IBookBuildArtifact {
+  kind: BookArtifactKind;
+  /** Sandbox-relative path (e.g. 'build/book.pdf'). Used for re-bundling. */
+  sandboxPath: string;
+  /** Public URL on the disk mirror; served via `/uploads/books/...`. */
+  url: string;
+  sizeBytes: number;
+  builtAt: Date;
+  /** Which language edition this artifact belongs to; 'en' for the source. */
+  lang?: string;
+}
+
+/**
+ * User-selected production settings — governs what the Formatter / Narrator /
+ * Translator do. Set at outline-ready with sensible defaults; editable from
+ * Studio settings. All values are persisted so re-runs are deterministic.
+ */
+export interface IBookProduction {
+  trimSize: BookTrimSize;
+  formats: BookExportFormat[];
+  enableNarration: boolean;
+  narrationVoiceId?: string;
+  enableTranslation: boolean;
+  translationLanguages: BookTranslationLanguage[];
+}
 
 export type BookTitleTreatment =
   | 'bold-sans'
@@ -136,6 +201,14 @@ export interface IBook extends Document {
   editingChoices?: IBookEditingChoices;
   /** AI-picked at outline-complete from pickThemeForOutline(); user-overridable via Studio dropdown. */
   themeId: BookThemeId;
+  /** User-selected export / narration / translation settings (Slice 7+). */
+  production?: IBookProduction;
+  /** Every file the Formatter / Bundler produced — source of truth for the Downloads section. */
+  artifacts?: IBookBuildArtifact[];
+  /** Public URL of the final Mr8-Book-<slug>.zip once the Bundler (Slice 7.iii) succeeds. */
+  bundleUrl?: string;
+  /** Set alongside `bundleUrl` when bundling completes. */
+  publishedBundleAt?: Date;
   status: BookStatus;
   errorMessage?: string;
   createdAt: Date;
@@ -239,6 +312,69 @@ const coverVariantSchema = new Schema<IBookCoverVariant>(
   { _id: false }
 );
 
+const buildArtifactSchema = new Schema<IBookBuildArtifact>(
+  {
+    kind: {
+      type: String,
+      required: true,
+      enum: [
+        'pdf',
+        'epub',
+        'docx',
+        'cover-wrap-paperback',
+        'cover-wrap-hardcover',
+        'cover-for-epub',
+        'copyright-cert',
+        'kdp-guide',
+        'bundle-zip',
+        'audiobook',
+        'translation-pdf',
+        'translation-epub',
+      ],
+    },
+    sandboxPath: { type: String, required: true, maxlength: 500 },
+    url: { type: String, required: true, maxlength: 500 },
+    sizeBytes: { type: Number, required: true, min: 0 },
+    builtAt: { type: Date, required: true, default: () => new Date() },
+    lang: { type: String, required: false, maxlength: 8 },
+  },
+  { _id: false }
+);
+
+const productionSchema = new Schema<IBookProduction>(
+  {
+    trimSize: {
+      type: String,
+      required: true,
+      enum: ['5x8', '5.5x8.5', '6x9'],
+      default: '6x9',
+    },
+    formats: {
+      type: [String],
+      required: true,
+      default: ['pdf', 'epub', 'docx'],
+      validate: {
+        validator: (arr: string[]) =>
+          arr.every((f) => f === 'pdf' || f === 'epub' || f === 'docx'),
+        message: 'formats may only contain pdf, epub, or docx',
+      },
+    },
+    enableNarration: { type: Boolean, required: true, default: false },
+    narrationVoiceId: { type: String, required: false, maxlength: 120 },
+    enableTranslation: { type: Boolean, required: true, default: false },
+    translationLanguages: {
+      type: [String],
+      required: true,
+      default: [],
+      validate: {
+        validator: (arr: string[]) => arr.every((l) => l === 'es' || l === 'fr'),
+        message: 'translationLanguages may only contain es or fr',
+      },
+    },
+  },
+  { _id: false }
+);
+
 const bookSchema = new Schema<IBook>(
   {
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
@@ -261,6 +397,10 @@ const bookSchema = new Schema<IBook>(
       enum: BOOK_THEME_IDS,
       default: 'literary-classic',
     },
+    production: { type: productionSchema, required: false },
+    artifacts: { type: [buildArtifactSchema], default: undefined },
+    bundleUrl: { type: String, required: false, maxlength: 500 },
+    publishedBundleAt: { type: Date, required: false },
     status: {
       type: String,
       enum: [
@@ -268,6 +408,7 @@ const bookSchema = new Schema<IBook>(
         'outline-ready',
         'drafting',
         'editing',
+        'formatting',
         'cover-pending',
         'cover-ready',
         'narrating',
