@@ -17,6 +17,12 @@ interface Props {
   themeId: BookThemeId;
   onTitleChange: (t: string) => void;
   onThemeChange: (id: BookThemeId) => void;
+  /** Triggers the Formatter (Slice 7.ii). Disabled until drafted. */
+  onExport?: () => void;
+  /** When true, export is currently streaming — render the button as running. */
+  exportRunning?: boolean;
+  /** Disable the export button with a tooltip (e.g. "Draft chapters first"). */
+  exportDisabledReason?: string;
 }
 
 export default function BookStudioToolbar({
@@ -25,6 +31,9 @@ export default function BookStudioToolbar({
   themeId,
   onTitleChange,
   onThemeChange,
+  onExport,
+  exportRunning,
+  exportDisabledReason,
 }: Props): JSX.Element {
   const [localTitle, setLocalTitle] = useState(title);
   const [themeOpen, setThemeOpen] = useState(false);
@@ -159,9 +168,26 @@ export default function BookStudioToolbar({
         Private
       </ToolbarButton>
 
-      {/* Export — disabled until Slice 7 */}
-      <ToolbarButton disabled title="Export PDF / EPUB / DOCX / zip (coming in Slice 7)">
-        Export
+      {/* Export — streams the Formatter (Slice 7.ii) */}
+      <ToolbarButton
+        onClick={onExport}
+        disabled={!onExport || Boolean(exportDisabledReason) || exportRunning}
+        title={
+          exportRunning
+            ? 'Formatting — PDF / EPUB / DOCX building now'
+            : exportDisabledReason ?? 'Build PDF / EPUB / DOCX'
+        }
+      >
+        {exportRunning ? (
+          <>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="animate-spin">
+              <circle cx="12" cy="12" r="9" strokeDasharray="42 58" strokeLinecap="round" />
+            </svg>
+            Formatting…
+          </>
+        ) : (
+          'Export'
+        )}
       </ToolbarButton>
 
       {/* Read mode — disabled until chapters exist */}

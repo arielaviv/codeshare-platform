@@ -23,6 +23,8 @@ interface BookShape {
   chapters?: Array<{ n?: number; status?: string }>;
   auditIssues?: Array<{ resolved?: boolean }>;
   editingChoices?: { aggressiveness?: string };
+  artifacts?: Array<{ kind: string; url?: string }>;
+  bundleUrl?: string;
   status: string;
 }
 
@@ -138,17 +140,37 @@ function computeStages(book: BookShape): Stage[] {
       id: 'format',
       label: 'Format',
       icon: <Package size={ICON_SIZE} />,
-      subtext: 'PDF · EPUB · DOCX',
-      status: 'pending',
+      subtext: formatSubtext(book),
+      status: formatStatus(book),
     },
     {
       id: 'export',
       label: 'Export',
       icon: <Download size={ICON_SIZE} />,
-      subtext: 'Zip + KDP kit',
-      status: 'pending',
+      subtext: book.bundleUrl ? 'Bundle ready' : 'Zip + KDP kit',
+      status: book.bundleUrl ? 'done' : 'pending',
     },
   ];
+}
+
+function formatStatus(book: BookShape): Stage['status'] {
+  if (book.status === 'formatting') return 'running';
+  const artifacts = book.artifacts ?? [];
+  const hasPdf = artifacts.some((a) => a.kind === 'pdf');
+  const hasEpub = artifacts.some((a) => a.kind === 'epub');
+  const hasDocx = artifacts.some((a) => a.kind === 'docx');
+  if (hasPdf && hasEpub && hasDocx) return 'done';
+  if (hasPdf || hasEpub || hasDocx) return 'running';
+  return 'pending';
+}
+
+function formatSubtext(book: BookShape): string {
+  const artifacts = book.artifacts ?? [];
+  const targets = ['pdf', 'epub', 'docx'] as const;
+  const built = targets.filter((t) => artifacts.some((a) => a.kind === t));
+  if (built.length === 0) return 'PDF · EPUB · DOCX';
+  if (built.length === targets.length) return 'PDF · EPUB · DOCX ready';
+  return `${built.map((t) => t.toUpperCase()).join(' · ')} ready`;
 }
 
 function StagePip({ stage }: { stage: Stage }): JSX.Element {

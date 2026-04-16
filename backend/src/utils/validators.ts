@@ -288,6 +288,13 @@ export const reEditChapterSchema = z.object({
   sessionId: z.string().optional(),
 });
 
+export const formatBookSchema = z.object({
+  bookId: z.string().min(1).max(64),
+  formats: z.array(z.enum(['pdf', 'epub', 'docx'])).min(1).max(3).optional(),
+  forceReformat: z.boolean().optional(),
+  sessionId: z.string().optional(),
+});
+
 export const acceptDeliverySchema = z.object({
   planId: z
     .string()
@@ -320,4 +327,5 @@ export type ApproveBookInput = z.infer<typeof approveBookSchema>;
 export type PolishBookInput = z.infer<typeof polishBookSchema>;
 export type AuditBookInput = z.infer<typeof auditBookSchema>;
 export type ReEditChapterInput = z.infer<typeof reEditChapterSchema>;
+export type FormatBookInput = z.infer<typeof formatBookSchema>;
 export type AcceptDeliveryInput = z.infer<typeof acceptDeliverySchema>;

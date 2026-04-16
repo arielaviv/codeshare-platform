@@ -1,16 +1,34 @@
 /**
  * Downloads section — grouped rows, one per artifact, with real states.
  *
- * Slice 4a: no deliverables exist yet; all rows render DISABLED with
- * stage-gated tooltips so the user understands the sequence ("Available
- * after chapter drafting completes", "Available after format stage", etc.)
- * and sees what their finished bundle will contain.
- *
- * When Slices 4b–9 land, the `disabled` flags flip to false and the
- * `downloadUrl` fields populate from book.buildUrls / book.audioUrl / etc.
- * The shape of this component doesn't change — we just unlock rows.
+ * Reads from `book.artifacts[]`, which is populated by the Formatter
+ * (Slice 7.ii) and Bundler (Slice 7.iii). Audio artifacts arrive in
+ * Slice 8, translations in Slice 9.
  */
+import { useMemo } from 'react';
 import { File, FileAudio, FileText, FileImage, Package, Globe } from 'lucide-react';
+
+export type DownloadArtifactKind =
+  | 'pdf'
+  | 'epub'
+  | 'docx'
+  | 'cover-wrap-paperback'
+  | 'cover-wrap-hardcover'
+  | 'cover-for-epub'
+  | 'copyright-cert'
+  | 'kdp-guide'
+  | 'bundle-zip'
+  | 'audiobook'
+  | 'translation-pdf'
+  | 'translation-epub';
+
+export interface BookArtifactShape {
+  kind: DownloadArtifactKind;
+  url: string;
+  sizeBytes: number;
+  builtAt?: string;
+  lang?: string;
+}
 
 interface BookShape {
   _id: string;
@@ -18,11 +36,8 @@ interface BookShape {
   outline?: { chapters: Array<unknown> };
   selectedCoverIdx?: number;
   status: string;
-  /** Future fields — populate as stages complete. */
-  buildUrls?: { pdf?: string; epub?: string; docx?: string };
-  audioUrl?: string;
+  artifacts?: BookArtifactShape[];
   bundleUrl?: string;
-  translations?: Array<{ lang: string; url?: string }>;
 }
 
 interface Props {
@@ -46,7 +61,16 @@ interface DownloadGroup {
 const ICON = { size: 16, strokeWidth: 1.8 } as const;
 
 export default function DownloadsSection({ book }: Props): JSX.Element {
-  const groups = buildGroups(book);
+  const artifactsByKey = useMemo(() => {
+    const m = new Map<string, BookArtifactShape>();
+    for (const a of book.artifacts ?? []) {
+      const key = `${a.kind}:${a.lang ?? 'en'}`;
+      m.set(key, a);
+    }
+    return m;
+  }, [book.artifacts]);
+
+  const groups = buildGroups(book, artifactsByKey);
   const ready = groups.flatMap((g) => g.rows).filter((r) => !r.disabledReason).length;
   const total = groups.flatMap((g) => g.rows).length;
 
@@ -153,15 +177,29 @@ function DownloadRowItem({ row }: { row: DownloadRow }): JSX.Element {
   );
 }
 
-function buildGroups(book: BookShape): DownloadGroup[] {
+function pick(
+  map: Map<string, BookArtifactShape>,
+  kind: DownloadArtifactKind,
+  lang: string = 'en'
+): BookArtifactShape | undefined {
+  return map.get(`${kind}:${lang}`);
+}
+
+function buildGroups(
+  book: BookShape,
+  artifactsByKey: Map<string, BookArtifactShape>
+): DownloadGroup[] {
   const hasOutline = Boolean(book.outline?.chapters?.length);
   const coverPicked = typeof book.selectedCoverIdx === 'number';
-  const draftsReady = false; // Slice 4b
-  const polishReady = false; // Slice 5
-  const formatReady = Boolean(book.buildUrls?.pdf); // Slice 7
-  const audioReady = Boolean(book.audioUrl); // Slice 8
-  // Slice 9 — unlocks the per-language rows individually via `url` presence;
-  // no aggregate flag needed here.
+  const pdf = pick(artifactsByKey, 'pdf');
+  const epub = pick(artifactsByKey, 'epub');
+  const docx = pick(artifactsByKey, 'docx');
+  const coverWrapPb = pick(artifactsByKey, 'cover-wrap-paperback');
+  const coverWrapHc = pick(artifactsByKey, 'cover-wrap-hardcover');
+  const copyrightCert = pick(artifactsByKey, 'copyright-cert');
+  const kdpGuide = pick(artifactsByKey, 'kdp-guide');
+  const audiobook = pick(artifactsByKey, 'audiobook');
+  const formatReady = Boolean(pdf || epub || docx);
 
   const reasonByStage = {
     outline: 'Available after outline is approved.',
@@ -169,19 +207,19 @@ function buildGroups(book: BookShape): DownloadGroup[] {
     draft: 'Available after chapter drafting completes.',
     polish: 'Available after the editing pass finishes.',
     format: 'Available after formatting completes.',
+    wrap: 'Available after Slice 7.iii — cover wraps.',
     audio: 'Available after narration completes.',
     translations: 'Available after translations complete.',
+    kit: 'Available after Slice 7.iii — kit PDFs.',
   } as const;
 
   const stage = !hasOutline
     ? 'outline'
     : !coverPicked
       ? 'cover'
-      : !draftsReady
-        ? 'draft'
-        : !polishReady
-          ? 'polish'
-          : 'format';
+      : !formatReady
+        ? 'format'
+        : 'format';
 
   return [
     {
@@ -191,23 +229,31 @@ function buildGroups(book: BookShape): DownloadGroup[] {
           key: 'pdf',
           icon: <FileText {...ICON} />,
           name: 'book.pdf',
-          meta: 'Print-ready · 6×9 · chapter breaks on right pages',
-          url: book.buildUrls?.pdf,
-          disabledReason: formatReady ? undefined : reasonByStage[stage],
+          meta: pdf
+            ? `Print-ready · ${formatBytes(pdf.sizeBytes)}`
+            : 'Print-ready · 6×9 · chapter breaks on right pages',
+          url: pdf?.url,
+          disabledReason: pdf ? undefined : reasonByStage[stage],
         },
         {
           key: 'cover-wrap-pb',
           icon: <FileImage {...ICON} />,
           name: 'cover-wrap-paperback.pdf',
-          meta: 'Full KDP wrap · spine-width correct · bleeds set',
-          disabledReason: formatReady ? undefined : reasonByStage.format,
+          meta: coverWrapPb
+            ? `Paperback wrap · ${formatBytes(coverWrapPb.sizeBytes)}`
+            : 'Full KDP wrap · spine-width correct · bleeds set',
+          url: coverWrapPb?.url,
+          disabledReason: coverWrapPb ? undefined : reasonByStage.wrap,
         },
         {
           key: 'cover-wrap-hc',
           icon: <FileImage {...ICON} />,
           name: 'cover-wrap-hardcover.pdf',
-          meta: 'Hardcover KDP wrap · wider spine math',
-          disabledReason: formatReady ? undefined : reasonByStage.format,
+          meta: coverWrapHc
+            ? `Hardcover wrap · ${formatBytes(coverWrapHc.sizeBytes)}`
+            : 'Hardcover KDP wrap · wider spine math',
+          url: coverWrapHc?.url,
+          disabledReason: coverWrapHc ? undefined : reasonByStage.wrap,
         },
       ],
     },
@@ -218,17 +264,21 @@ function buildGroups(book: BookShape): DownloadGroup[] {
           key: 'epub',
           icon: <File {...ICON} />,
           name: 'book.epub',
-          meta: 'Kindle · Apple Books · drop caps + embedded cover',
-          url: book.buildUrls?.epub,
-          disabledReason: formatReady ? undefined : reasonByStage[stage],
+          meta: epub
+            ? `EPUB · ${formatBytes(epub.sizeBytes)}`
+            : 'Kindle · Apple Books · drop caps + embedded cover',
+          url: epub?.url,
+          disabledReason: epub ? undefined : reasonByStage[stage],
         },
         {
           key: 'docx',
           icon: <FileText {...ICON} />,
           name: 'book.docx',
-          meta: 'Editable · Word reference styles applied',
-          url: book.buildUrls?.docx,
-          disabledReason: formatReady ? undefined : reasonByStage[stage],
+          meta: docx
+            ? `Word · ${formatBytes(docx.sizeBytes)}`
+            : 'Editable · Word reference styles applied',
+          url: docx?.url,
+          disabledReason: docx ? undefined : reasonByStage[stage],
         },
       ],
     },
@@ -239,9 +289,11 @@ function buildGroups(book: BookShape): DownloadGroup[] {
           key: 'full-mp3',
           icon: <FileAudio {...ICON} />,
           name: 'full.mp3',
-          meta: 'Complete audiobook · ElevenLabs · your chosen voice',
-          url: book.audioUrl,
-          disabledReason: audioReady ? undefined : reasonByStage.audio,
+          meta: audiobook
+            ? `Audiobook · ${formatBytes(audiobook.sizeBytes)}`
+            : 'Complete audiobook · ElevenLabs · your chosen voice',
+          url: audiobook?.url,
+          disabledReason: audiobook ? undefined : reasonByStage.audio,
         },
       ],
     },
@@ -250,14 +302,16 @@ function buildGroups(book: BookShape): DownloadGroup[] {
       // v1: Spanish + French only. Arabic + Hebrew deferred to v2 (RTL +
       // Hebrew biblical-resonance craft work).
       rows: ['es', 'fr'].map((lang) => {
-        const url = book.translations?.find((t) => t.lang === lang)?.url;
+        const tEpub = pick(artifactsByKey, 'translation-epub', lang);
         return {
           key: `xl-${lang}`,
           icon: <Globe {...ICON} />,
           name: `${lang}-book.epub`,
-          meta: `${LANG_LABEL[lang] ?? lang} · full translation · typeset in the same theme`,
-          url,
-          disabledReason: url ? undefined : reasonByStage.translations,
+          meta: tEpub
+            ? `${LANG_LABEL[lang] ?? lang} · ${formatBytes(tEpub.sizeBytes)}`
+            : `${LANG_LABEL[lang] ?? lang} · full translation · typeset in the same theme`,
+          url: tEpub?.url,
+          disabledReason: tEpub ? undefined : reasonByStage.translations,
         };
       }),
     },
@@ -268,26 +322,31 @@ function buildGroups(book: BookShape): DownloadGroup[] {
           key: 'copyright',
           icon: <FileText {...ICON} />,
           name: 'copyright-certificate.pdf',
-          meta: 'Author name · timestamp · manuscript SHA-256 hash',
-          disabledReason: formatReady ? undefined : reasonByStage.format,
+          meta: copyrightCert
+            ? `Certificate · ${formatBytes(copyrightCert.sizeBytes)}`
+            : 'Author name · timestamp · manuscript SHA-256 hash',
+          url: copyrightCert?.url,
+          disabledReason: copyrightCert ? undefined : reasonByStage.kit,
         },
         {
           key: 'kdp',
           icon: <FileText {...ICON} />,
           name: 'kdp-upload-guide.pdf',
-          meta: 'Personalized 10-minute walkthrough for KDP',
-          disabledReason: formatReady ? undefined : reasonByStage.format,
-        },
-        {
-          key: 'meta',
-          icon: <FileText {...ICON} />,
-          name: 'metadata.csv',
-          meta: 'Pre-filled title, description, keywords, BISAC categories',
-          disabledReason: polishReady ? undefined : reasonByStage.polish,
+          meta: kdpGuide
+            ? `Guide · ${formatBytes(kdpGuide.sizeBytes)}`
+            : 'Personalized 10-minute walkthrough for KDP',
+          url: kdpGuide?.url,
+          disabledReason: kdpGuide ? undefined : reasonByStage.kit,
         },
       ],
     },
   ];
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 const LANG_LABEL: Record<string, string> = {

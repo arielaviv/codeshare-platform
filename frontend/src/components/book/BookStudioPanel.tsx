@@ -27,6 +27,8 @@ import DownloadsSection from './sections/DownloadsSection';
 import BookPropertiesPanel from './BookPropertiesPanel';
 import Mr8LogoLoader from '../shared/Mr8LogoLoader';
 import type { LiveReaderHandle } from './LiveReader';
+import type { BookArtifactShape } from './sections/DownloadsSection';
+import { streamBookFormat } from '../../services/bookFormatStream';
 
 interface Props {
   bookId: string;
@@ -94,6 +96,9 @@ interface BookRecord {
   chapters?: BookChapterRecord[];
   coverVariants?: BookCoverVariantRecord[];
   selectedCoverIdx?: number;
+  /** Every file the Formatter / Bundler produced (Slice 7+). */
+  artifacts?: BookArtifactShape[];
+  bundleUrl?: string;
   status: string;
   updatedAt: string;
 }
@@ -183,6 +188,80 @@ export default function BookStudioPanel({ bookId, liveMode, liveReaderRef, initi
     [book, bookId]
   );
 
+  // Export / format state — drives the toolbar's Export button + live-updates
+  // the DownloadsSection rows as each pandoc target finishes.
+  const [exportRunning, setExportRunning] = useState(false);
+
+  const draftedChapterCount = (book?.chapters ?? []).filter(
+    (c) => c.status === 'drafted' || c.status === 'edited' || c.status === 'proofed'
+  ).length;
+  const outlineChapterCount = book?.outline?.chapters.length ?? 0;
+  const exportReady =
+    outlineChapterCount > 0 && draftedChapterCount === outlineChapterCount;
+  const exportDisabledReason = !book
+    ? 'Loading…'
+    : !exportReady
+      ? 'Draft all chapters before exporting'
+      : undefined;
+
+  const startExport = useCallback(() => {
+    if (!book || exportRunning) return;
+    setExportRunning(true);
+    // Optimistic: flip status to 'formatting' so the stepper lights up immediately.
+    setBook((prev) => (prev ? { ...prev, status: 'formatting' } : prev));
+    streamBookFormat(
+      { bookId: book._id },
+      {
+        onStageStarted: () => {},
+        onBuilding: () => {},
+        onReady: (data) => {
+          // Live-append the new artifact to the book so DownloadsSection
+          // lights up row-by-row without waiting for the terminal event.
+          setBook((prev) => {
+            if (!prev) return prev;
+            const without = (prev.artifacts ?? []).filter((a) => a.kind !== data.kind);
+            const nextArtifact: BookArtifactShape = {
+              kind: data.kind,
+              url: data.url,
+              sizeBytes: data.sizeBytes,
+              builtAt: new Date().toISOString(),
+              lang: 'en',
+            };
+            return { ...prev, artifacts: [...without, nextArtifact] };
+          });
+        },
+        onCoverReady: (data) => {
+          setBook((prev) => {
+            if (!prev) return prev;
+            const without = (prev.artifacts ?? []).filter((a) => a.kind !== data.kind);
+            return {
+              ...prev,
+              artifacts: [
+                ...without,
+                {
+                  kind: data.kind,
+                  url: data.url,
+                  sizeBytes: data.sizeBytes,
+                  builtAt: new Date().toISOString(),
+                  lang: 'en',
+                },
+              ],
+            };
+          });
+        },
+        onStageComplete: () => {
+          setExportRunning(false);
+          setSection('downloads');
+        },
+        onError: (message) => {
+          console.error('[book-format] error:', message);
+          setExportRunning(false);
+          setBook((prev) => (prev ? { ...prev, status: 'editing' } : prev));
+        },
+      }
+    );
+  }, [book, exportRunning]);
+
   // Convert coverVariants into CoverCellData (reuses the chat picker's shape).
   const coverCells: CoverCellData[] = useMemo(() => {
     if (!book?.coverVariants || book.coverVariants.length === 0) {
@@ -243,6 +322,9 @@ export default function BookStudioPanel({ bookId, liveMode, liveReaderRef, initi
         themeId={book.themeId}
         onTitleChange={(t) => patchBook({ title: t })}
         onThemeChange={(id) => patchBook({ themeId: id })}
+        onExport={startExport}
+        exportRunning={exportRunning}
+        exportDisabledReason={exportDisabledReason}
       />
       <BookStageStepper book={book} />
       <div className="flex-1 min-h-0 flex">

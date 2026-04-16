@@ -12,6 +12,7 @@ import {
   coverGenerationRateLimiter,
   chapterDraftingRateLimiter,
   bookAuditRateLimiter,
+  bookFormatRateLimiter,
 } from '../middleware/rateLimit.middleware';
 import { getCodeExplanation } from '../services/ai.service';
 import { chatWithTools } from '../services/ai-chat.service';
@@ -40,6 +41,7 @@ import {
   polishBookSchema,
   auditBookSchema,
   reEditChapterSchema,
+  formatBookSchema,
 } from '../utils/validators';
 import { generateBook } from '../services/book-agent.service';
 import type { BookAgentSSEWriter } from '../services/book-agent.service';
@@ -51,6 +53,7 @@ import { runPolishPipeline } from '../services/book/producer.service';
 import { runContinuityAudit } from '../services/book/continuity-auditor.service';
 import { runLineEdit } from '../services/book/line-editor.service';
 import { runCopyEdit } from '../services/book/copy-editor.service';
+import { formatBook } from '../services/book/formatter.service';
 import { ApiError } from '../middleware/error.middleware';
 import type { ChatMessage, AgentRequest } from '../types/chat';
 import { debitForFeature } from '../services/wallet.service';
@@ -1303,6 +1306,67 @@ router.post(
         const message = innerErr instanceof Error ? innerErr.message : String(innerErr);
         try {
           writer.send('error', { message: `Re-edit crashed: ${message}` });
+          writer.end();
+        } catch { /* ignore */ }
+      }
+    } catch (err) {
+      if (!res.headersSent) next(err);
+      else res.end();
+    }
+  }
+);
+
+/**
+ * Mr8 Book — format-book SSE endpoint (Slice 7.ii).
+ * Runs the Formatter: toolchain install → theme assets → manuscript build →
+ * composite EPUB cover → pandoc PDF/EPUB/DOCX → disk mirror under
+ * `/uploads/books/<userId>/<bookId>/build/`. Streams toolchain_*, building,
+ * ready, cover_*, and a terminal stage_complete with the artifacts[].
+ */
+router.post(
+  '/format-book',
+  authenticate,
+  bookFormatRateLimiter,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const validation = formatBookSchema.safeParse(req.body);
+      if (!validation.success) throw new ApiError(validation.error.errors[0].message, 400);
+      if (!req.user) throw new ApiError('Unauthorized', 401);
+
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders();
+
+      let closed = false;
+      req.on('close', () => { closed = true; });
+
+      const writer = {
+        send(event: string, data: unknown) {
+          if (closed) return;
+          res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        },
+        end() {
+          if (!closed) res.end();
+        },
+      };
+
+      try {
+        await formatBook(
+          {
+            bookId: validation.data.bookId,
+            userId: req.user._id,
+            sessionId: validation.data.sessionId,
+            formats: validation.data.formats,
+            forceReformat: validation.data.forceReformat,
+          },
+          writer
+        );
+      } catch (innerErr) {
+        const message = innerErr instanceof Error ? innerErr.message : String(innerErr);
+        try {
+          writer.send('error', { message: `Format crashed: ${message}` });
           writer.end();
         } catch { /* ignore */ }
       }

@@ -16,7 +16,8 @@ export type UsageFeature =
   | 'book-draft-chapter'
   | 'book-audit'
   | 'book-line-edit'
-  | 'book-copy-edit';
+  | 'book-copy-edit'
+  | 'book-format';
 
 export interface IUsageEvent extends Document {
   _id: mongoose.Types.ObjectId;
@@ -64,6 +65,7 @@ const usageEventSchema = new Schema<IUsageEvent>(
         'book-audit',
         'book-line-edit',
         'book-copy-edit',
+        'book-format',
       ],
     },
     modelName: {

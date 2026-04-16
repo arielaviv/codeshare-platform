@@ -170,3 +170,17 @@ export const researchRateLimiter = rateLimit({
     return req.user?._id?.toString() || req.ip || 'anonymous';
   },
 });
+
+export const bookFormatRateLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  message: {
+    status: 'error',
+    message: 'Book format rate limit reached. Please try again later.',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    return req.user?._id?.toString() || req.ip || 'anonymous';
+  },
+});
