@@ -40,31 +40,61 @@ const LiveReader = forwardRef<LiveReaderHandle, LiveReaderProps>(function LiveRe
   { theme, bookTitle, author, seedPages, coverUrl },
   ref
 ) {
-  // Frame geometry — responsive width, 6×9 aspect from the theme's trim.
+  // Frame geometry — responsive width, trim-specific aspect, and clamped so
+  // the frame + controls always fit within the reader's parent height.
+  // Previously the frame used its full width-derived height, which on small
+  // screens (or Dev Tools open) pushed the ControlsBar below the fold and
+  // made Prev/Next unreachable.
   const [frameWidth, setFrameWidth] = useState(420);
+  const [containerHeight, setContainerHeight] = useState<number>(0);
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const frameRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const update = () => {
-      const parent = frameRef.current?.parentElement;
+      const root = rootRef.current;
+      const parent = root?.parentElement;
       if (!parent) return;
       const max = Math.min(parent.clientWidth - 48, 520);
       setFrameWidth(Math.max(320, max));
+      setContainerHeight(root?.clientHeight ?? parent.clientHeight);
     };
     update();
     window.addEventListener('resize', update);
-    return () => window.removeEventListener('resize', update);
+    let ro: ResizeObserver | null = null;
+    if (rootRef.current && typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(() => update());
+      ro.observe(rootRef.current);
+    }
+    return () => {
+      window.removeEventListener('resize', update);
+      ro?.disconnect();
+    };
   }, []);
 
   const [trimW, trimH] = theme.trimSize.split('x').map(Number);
   const aspect = trimH / trimW;
-  const frameHeight = Math.round(frameWidth * aspect);
+  // Chrome reserved for ControlsBar (~32px) + vertical gap (12px) + py-6 (48px).
+  const CONTROLS_CHROME_PX = 92;
+  const maxFrameHeight = Math.max(280, (containerHeight || 800) - CONTROLS_CHROME_PX);
+  const naturalFrameHeight = Math.round(frameWidth * aspect);
+  const frameHeight = Math.min(naturalFrameHeight, maxFrameHeight);
+  // If we clamped height, shrink width so the aspect is preserved (otherwise
+  // running heads + page margins look wrong).
+  const effectiveFrameWidth =
+    frameHeight === naturalFrameHeight ? frameWidth : Math.round(frameHeight / aspect);
 
-  // Usable inner height = frame height minus vertical theme margins (percent-ish).
+  // Usable inner height — frame height minus vertical margins and chrome.
+  // Chrome is theme-aware: running-head + page-number rows scale with body
+  // leading, not a fixed 22px each. On Children's (20pt leading → ~27px)
+  // the old fixed chrome underestimated space reserved for running heads.
   const usableHeightPx = useMemo(() => {
+    const leadingPx = theme.bodyLeadingPt * 1.3333;
     const topPct = theme.marginTopIn / trimH;
     const botPct = theme.marginBottomIn / trimH;
-    // Running-head + page-number rows eat ~1.5em each (~22px) when present.
-    const chrome = (theme.runningHeadStyle !== 'none' ? 22 : 0) + (theme.pageNumberPosition !== 'none' ? 22 : 0);
+    const chromeRow = Math.max(20, Math.round(leadingPx * 1.2));
+    const chrome =
+      (theme.runningHeadStyle !== 'none' ? chromeRow : 0) +
+      (theme.pageNumberPosition !== 'none' ? chromeRow : 0);
     return Math.max(200, Math.round(frameHeight * (1 - topPct - botPct)) - chrome);
   }, [frameHeight, theme, trimH]);
 
@@ -74,17 +104,25 @@ const LiveReader = forwardRef<LiveReaderHandle, LiveReaderProps>(function LiveRe
   const measureRef = useRef<HTMLDivElement | null>(null);
 
   const measure: MeasureFn = useMemo(() => {
+    // Per-theme header reservation for chapter-opener pages. Reserves space
+    // for the chapter number label, the chapter heading (which can wrap to
+    // two lines for long titles), and the floated drop cap. The old fixed
+    // 80px value was calibrated for Literary Modern (10.5pt / 2-line drop
+    // cap) and clipped catastrophically on Children's (14pt / 3-line cap).
+    const leadingPx = theme.bodyLeadingPt * 1.3333;
+    const chapterNumberPx = Math.round(leadingPx * 1.2);
+    const headingBaseEm = theme.bodyFontSizePt >= 13 ? 2.2 : 1.8;
+    const headingPx = Math.round(leadingPx * headingBaseEm * 1.6); // up to 2 lines
+    const dropCapPx = theme.dropCapEnabled ? theme.dropCapLines * leadingPx : 0;
+    const openerHeaderBump = Math.round(chapterNumberPx + headingPx + dropCapPx + 24);
     return (text: string, page: Page): number => {
       const el = measureRef.current;
       if (!el) return 0;
-      // The chapter-opener page adds a heading + optional drop cap that eats
-      // vertical space. Approximate: heading ~3 lines, drop cap floats so
-      // doesn't strictly consume line count.
-      const headerBump = page.kind === 'chapter-opener' ? 80 : 0;
+      const headerBump = page.kind === 'chapter-opener' ? openerHeaderBump : 0;
       el.textContent = text;
       return el.scrollHeight + headerBump;
     };
-  }, []);
+  }, [theme]);
 
   // Seed pages may need recomputation when the theme or book metadata changes.
   const themeKey = `${theme.id}-${frameWidth}x${frameHeight}`;
@@ -123,7 +161,6 @@ const LiveReader = forwardRef<LiveReaderHandle, LiveReaderProps>(function LiveRe
   );
 
   // Keyboard navigation
-  const rootRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const el = rootRef.current;
     if (!el) return;
@@ -176,9 +213,12 @@ const LiveReader = forwardRef<LiveReaderHandle, LiveReaderProps>(function LiveRe
     <div
       ref={rootRef}
       tabIndex={0}
-      className={`h-full outline-none flex flex-col items-center justify-center px-4 py-6 gap-3 bg-[#EDE7DB] dark:bg-[#1A1814] book-theme-${theme.id}`}
+      className={`h-full outline-none flex flex-col items-center px-4 py-6 gap-3 bg-[#EDE7DB] dark:bg-[#1A1814] book-theme-${theme.id}`}
     >
-      <div style={{ perspective: '1600px', width: frameWidth, height: frameHeight }} className="relative">
+      <div
+        style={{ perspective: '1600px', width: effectiveFrameWidth, height: frameHeight }}
+        className="relative flex-shrink-0"
+      >
         <div
           ref={frameRef}
           className="absolute inset-0"
@@ -187,7 +227,7 @@ const LiveReader = forwardRef<LiveReaderHandle, LiveReaderProps>(function LiveRe
           <PageStack
             pages={paginator.pages}
             currentIndex={paginator.currentIndex}
-            frameWidth={frameWidth}
+            frameWidth={effectiveFrameWidth}
             frameHeight={frameHeight}
             theme={theme}
             bookTitle={bookTitle}
@@ -209,19 +249,23 @@ const LiveReader = forwardRef<LiveReaderHandle, LiveReaderProps>(function LiveRe
           pointerEvents: 'none',
           left: -99999,
           top: 0,
-          width: Math.round(frameWidth * (1 - theme.marginInnerIn / trimW - theme.marginOuterIn / trimW)),
+          width: Math.round(
+            effectiveFrameWidth * (1 - theme.marginInnerIn / trimW - theme.marginOuterIn / trimW)
+          ),
           whiteSpace: 'pre-wrap',
         }}
       />
 
-      <ControlsBar
-        pageIndex={paginator.currentIndex}
-        total={paginator.pages.length}
-        atLive={atLive}
-        onPrev={() => paginator.goToPage(Math.max(paginator.currentIndex - 1, 0))}
-        onNext={() => paginator.goToPage(Math.min(paginator.currentIndex + 1, paginator.pages.length - 1))}
-        onJumpToLive={() => paginator.jumpToLive()}
-      />
+      <div className="relative z-10 flex-shrink-0 mt-auto">
+        <ControlsBar
+          pageIndex={paginator.currentIndex}
+          total={paginator.pages.length}
+          atLive={atLive}
+          onPrev={() => paginator.goToPage(Math.max(paginator.currentIndex - 1, 0))}
+          onNext={() => paginator.goToPage(Math.min(paginator.currentIndex + 1, paginator.pages.length - 1))}
+          onJumpToLive={() => paginator.jumpToLive()}
+        />
+      </div>
     </div>
   );
 });
@@ -384,7 +428,10 @@ function PageCard({
                 <span>{theme.runningHeadStyle === 'title-author' ? author ?? '' : `Chapter ${page.chapterN}`}</span>
               </div>
             )}
-            <div className="flex-1 overflow-hidden">
+            <div
+              className="flex-1 min-h-0"
+              style={{ overflow: 'clip', paddingBottom: 2 }}
+            >
               {page.kind === 'chapter-opener' && (
                 <>
                   <div
