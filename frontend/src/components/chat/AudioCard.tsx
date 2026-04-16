@@ -11,6 +11,7 @@ interface Props {
   voiceName: string;
   scriptText: string;
   title?: string;
+  kind?: 'tts' | 'sfx' | 'music';
 }
 
 export default function AudioCard({
@@ -19,22 +20,45 @@ export default function AudioCard({
   voiceName,
   scriptText,
   title,
+  kind = 'tts',
 }: Props): JSX.Element {
   const [scriptOpen, setScriptOpen] = useState(false);
-  // audioUrl is server-relative '/uploads/audio/...'; resolve via static base.
   const fullUrl = audioUrl.startsWith('http') ? audioUrl : `${getStaticBase()}${audioUrl}`;
   const mins = Math.floor(durationSec / 60);
   const secs = durationSec % 60;
   const durationLabel = `${mins}:${secs.toString().padStart(2, '0')}`;
 
+  const headerLabel = kind === 'sfx'
+    ? 'Sound effect'
+    : kind === 'music'
+      ? 'Generated music'
+      : 'Generated audio';
+  const scriptLabel = kind === 'tts' ? 'Script transcript' : 'Generation prompt';
+
+  const Icon = kind === 'music' ? (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="text-brand-orange">
+      <path d="M9 18V5l12-2v13" />
+      <circle cx="6" cy="18" r="3" />
+      <circle cx="18" cy="16" r="3" />
+    </svg>
+  ) : kind === 'sfx' ? (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="text-brand-orange">
+      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+      <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+      <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+    </svg>
+  ) : (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="text-brand-orange">
+      <path d="M3 12h2l3-9 4 18 3-9h6" />
+    </svg>
+  );
+
   return (
     <div className="my-3 rounded-lg border border-edge dark:border-[#2A2A2A] bg-white dark:bg-[#141414] overflow-hidden">
       <div className="px-4 py-3 border-b border-edge dark:border-[#2A2A2A] bg-surface-secondary dark:bg-[#0F0F0F] flex items-center gap-2">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="text-brand-orange">
-          <path d="M3 12h2l3-9 4 18 3-9h6" />
-        </svg>
+        {Icon}
         <span className="text-sm font-semibold text-ink dark:text-[#E8E8E8] flex-1 truncate">
-          {title ?? 'Generated audio'}
+          {title ?? headerLabel}
         </span>
         <span className="text-[11px] tabular-nums text-ink-tertiary dark:text-[#666] flex-shrink-0">
           {voiceName} · {durationLabel}
@@ -53,7 +77,7 @@ export default function AudioCard({
           onClick={() => setScriptOpen((v) => !v)}
           className="w-full flex items-center justify-between px-4 py-2 text-[12px] font-medium text-ink dark:text-[#E8E8E8] hover:bg-surface-secondary dark:hover:bg-[#1A1A1A] transition-colors"
         >
-          <span>Script transcript</span>
+          <span>{scriptLabel}</span>
           <svg
             width="12"
             height="12"

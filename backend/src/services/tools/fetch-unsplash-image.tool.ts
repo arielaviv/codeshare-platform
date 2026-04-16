@@ -49,34 +49,40 @@ export const fetchUnsplashImageTool: AgentTool = {
       required: ['query'],
     },
   },
-  async execute(input: unknown): Promise<string> {
+  async execute(input: unknown, ctx: ToolContext): Promise<string> {
     const { query, orientation = 'landscape', count = 1 } = input as FetchUnsplashImageInput;
     if (!query || query.trim().length === 0) {
       return 'fetch_unsplash_image failed: query is required.';
     }
 
+    const emitImages = (results: Array<{ url: string; alt: string; author: string }>) => {
+      ctx.writer.send('images_fetched', {
+        toolCallId: ctx.toolCallId,
+        query,
+        orientation,
+        images: results,
+      });
+    };
+
     const accessKey = process.env.UNSPLASH_ACCESS_KEY;
     if (!accessKey) {
-      // Graceful degradation — return well-known fallback photo IDs so the
-      // agent can still produce hero images without API access.
-      const fallbacks = [
-        '1506744038136-46273834b3fb',
-        '1470071459604-3b5ec3a7fe05',
-        '1486325212027-8a9601a5e652',
-        '1518770660439-4636190af475',
-      ];
-      const id = fallbacks[Math.abs(hash(query)) % fallbacks.length];
-      const url = `https://images.unsplash.com/photo-${id}?w=1600&h=900&fit=crop`;
-      return JSON.stringify([
-        { id, url, alt: query, author: 'unsplash', width: 1600, height: 900 },
-      ]);
+      // No API key — refuse rather than ship a misleading random photo.
+      // The agent should route to generate_image with a similar prompt.
+      return [
+        'fetch_unsplash_image unavailable: UNSPLASH_ACCESS_KEY is not configured.',
+        'INSTEAD: call generate_image with a similar descriptive prompt.',
+        `Suggested generate_image input: { prompt: "Stylized photographic 16:9 hero image of ${query}, cinematic lighting, professional composition", size: "1536x1024", quality: "medium" }`,
+        'Do NOT pretend an unrelated stock photo represents the user\'s subject.',
+      ].join('\n');
     }
 
     const key = cacheKey(query, orientation);
     try {
       const cached = await ImageSearchCache.findOne({ key });
       if (cached) {
-        return JSON.stringify(cached.results.slice(0, Math.max(1, Math.min(5, count))));
+        const results = cached.results.slice(0, Math.max(1, Math.min(5, count)));
+        emitImages(results);
+        return JSON.stringify(results);
       }
     } catch {
       // Cache miss is fine
@@ -113,6 +119,7 @@ export const fetchUnsplashImageTool: AgentTool = {
       // Cache write failure isn't blocking
     }
 
+    emitImages(results);
     return JSON.stringify(results);
   },
 };

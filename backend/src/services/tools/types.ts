@@ -7,6 +7,10 @@ export interface ToolContext {
   writer: SSEWriter;
   userId: mongoose.Types.ObjectId | null;
   filesModified: Set<string>;
+  /** Anthropic tool_use id for the currently-executing call. Used to tag
+   *  downstream SSE events (e.g., media_generating → media_ready) so the
+   *  frontend can correlate them back to the originating tool_call. */
+  toolCallId?: string;
 }
 
 export interface AgentTool {

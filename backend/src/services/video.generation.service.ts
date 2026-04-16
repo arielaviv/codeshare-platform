@@ -28,8 +28,8 @@ function ensureDir(dir: string): void {
 }
 
 const REFINE_SYSTEM_PROMPT = `You rewrite short user prompts into cinematic
-prompts for the Runway Gen-3 Alpha Turbo video model. Output ONLY the
-refined prompt — no preamble, no quotes, no markdown.
+prompts for the Runway Gen-4 Turbo video model. Output ONLY the refined
+prompt — no preamble, no quotes, no markdown.
 
 Add cinematography hints (camera angle, lighting, mood, motion) but stay
 true to the user's intent. Keep under 250 chars. No emojis.`;
@@ -64,8 +64,9 @@ async function runwayCreateTask(refinedPrompt: string, durationSec: 5 | 10): Pro
   const apiKey = process.env.RUNWAYML_API_SECRET;
   if (!apiKey) throw new Error('RUNWAYML_API_SECRET not configured');
 
-  // Gen-3 Alpha Turbo expects either text_to_video or image_to_video.
-  // We use text_to_video for direct text prompts.
+  // Gen-4 Turbo — current Runway flagship text-to-video.
+  // Supported ratios: 1280:720 (16:9), 720:1280 (9:16), 960:960 (1:1),
+  // 1104:832 (4:3), 832:1104 (3:4), 1584:672 (21:9).
   const response = await fetch(`${RUNWAY_API}/text_to_video`, {
     method: 'POST',
     headers: {
@@ -75,9 +76,9 @@ async function runwayCreateTask(refinedPrompt: string, durationSec: 5 | 10): Pro
     },
     body: JSON.stringify({
       promptText: refinedPrompt,
-      model: 'gen3a_turbo',
+      model: 'gen4_turbo',
       duration: durationSec,
-      ratio: '1280:768',
+      ratio: '1280:720',
     }),
   });
 
@@ -204,7 +205,7 @@ export async function generateVideo(
           userId,
           sessionId: req.sessionId ? new mongoose.Types.ObjectId(req.sessionId) : undefined,
           feature: 'code-agent',
-          modelName: 'runway-gen3-turbo',
+          modelName: 'runway-gen4-turbo',
           inputTokens: refined.length,
           outputTokens: 0,
           costCents: doc.costCents,

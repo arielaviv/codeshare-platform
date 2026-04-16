@@ -12,9 +12,20 @@ interface GenerateImageInput {
   n?: number;
 }
 
-const openaiClient = process.env.OPENAI_API_KEY
-  ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
-  : null;
+/**
+ * Lazy client — evaluated per-call, not at module-load. dotenv.config()
+ * runs AFTER route imports in server.ts, so a top-level new OpenAI(...)
+ * would see process.env.OPENAI_API_KEY === undefined even when the key
+ * is present in .env.
+ */
+let cachedOpenAI: OpenAI | null = null;
+function getOpenAI(): OpenAI | null {
+  if (cachedOpenAI) return cachedOpenAI;
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) return null;
+  cachedOpenAI = new OpenAI({ apiKey: key });
+  return cachedOpenAI;
+}
 
 const UPLOADS_BASE = path.join(__dirname, '../../../uploads/generated');
 
@@ -76,6 +87,7 @@ export const generateImageTool: AgentTool = {
       return 'generate_image failed: prompt is required.';
     }
 
+    const openaiClient = getOpenAI();
     if (!openaiClient) {
       return 'generate_image failed: OPENAI_API_KEY is not configured. The Design skill is unavailable.';
     }
@@ -91,6 +103,7 @@ export const generateImageTool: AgentTool = {
       const cached = await GeneratedImageCache.findOne({ key });
       if (cached) {
         ctx.writer.send('media_ready', {
+          toolCallId: ctx.toolCallId,
           imageUrl: cached.imageUrl,
           path: cached.path,
           width: cached.width,
@@ -106,6 +119,7 @@ export const generateImageTool: AgentTool = {
 
     // Tell the frontend we're starting
     ctx.writer.send('media_generating', {
+      toolCallId: ctx.toolCallId,
       prompt,
       model: 'gpt-image-1',
     });
@@ -121,7 +135,16 @@ export const generateImageTool: AgentTool = {
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      return `generate_image failed: ${message}`;
+      // Billing / quota — relay verbatim, never substitute with external tools.
+      if (/billing|quota|insufficient|credit|limit/i.test(message)) {
+        return [
+          'generate_image failed: OpenAI billing or quota limit reached.',
+          'TELL THE USER EXACTLY THIS (do not paraphrase, do not suggest Figma/Canva/Looka/any external tool):',
+          '"Image generation is paused — the OpenAI account attached to this server has run out of credit. Please top up billing.openai.com and try again."',
+          `Raw error from OpenAI: ${message}`,
+        ].join('\n');
+      }
+      return `generate_image failed: ${message}. Tell the user this error verbatim. Do NOT suggest external tools as a substitute.`;
     }
 
     if (!result?.data || result.data.length === 0) {
@@ -162,6 +185,7 @@ export const generateImageTool: AgentTool = {
     }
 
     ctx.writer.send('media_ready', {
+      toolCallId: ctx.toolCallId,
       imageUrl: publicUrl,
       path: filepath,
       width: w,

@@ -3,6 +3,15 @@ import mongoose, { Document, Schema } from 'mongoose';
 export type ChatSessionSkill = 'apps' | 'slides' | 'sheet' | 'design' | 'mixed' | 'unknown';
 export type ChatSessionTitleStatus = 'pending' | 'named' | 'failed';
 
+/**
+ * Server-side ChatItem snapshot. We store ChatItems as `Mixed` because the
+ * union is large and evolves with the frontend; the frontend's typed union
+ * is the source of truth for rendering. Persistence is opt-in and primarily
+ * used for scheduled-task runs so the user can hydrate the transcript on
+ * next open.
+ */
+export type StoredChatItem = Record<string, unknown> & { id: string; kind: string };
+
 export interface IChatSession extends Document {
   _id: mongoose.Types.ObjectId;
   userId: mongoose.Types.ObjectId;
@@ -12,6 +21,7 @@ export interface IChatSession extends Document {
   firstUserMessage: string;
   messageCount: number;
   unreadCount: number;
+  messages: StoredChatItem[];
   createdAt: Date;
   updatedAt: Date;
   closedAt?: Date;
@@ -39,6 +49,7 @@ const chatSessionSchema = new Schema<IChatSession>(
     firstUserMessage: { type: String, required: true, maxlength: 5000 },
     messageCount: { type: Number, default: 0 },
     unreadCount: { type: Number, default: 0 },
+    messages: { type: Schema.Types.Mixed, default: [] },
     closedAt: { type: Date, required: false },
   },
   { timestamps: { createdAt: true, updatedAt: true } }

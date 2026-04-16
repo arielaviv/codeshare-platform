@@ -1,5 +1,7 @@
 import mongoose, { Document, Schema } from 'mongoose';
 
+export type AudioKind = 'tts' | 'sfx' | 'music';
+
 export interface IAudioFile extends Document {
   _id: mongoose.Types.ObjectId;
   userId: mongoose.Types.ObjectId;
@@ -9,6 +11,7 @@ export interface IAudioFile extends Document {
   scriptText: string;
   voiceId: string;
   voiceName?: string;
+  kind: AudioKind;
   durationSec: number;
   audioUrl: string;
   audioPath: string;
@@ -26,6 +29,7 @@ const audioSchema = new Schema<IAudioFile>(
     scriptText: { type: String, required: true },
     voiceId: { type: String, required: true },
     voiceName: { type: String },
+    kind: { type: String, enum: ['tts', 'sfx', 'music'], default: 'tts' },
     durationSec: { type: Number, required: true, default: 0 },
     audioUrl: { type: String, required: true },
     audioPath: { type: String, required: true },

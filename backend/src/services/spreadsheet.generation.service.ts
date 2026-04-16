@@ -102,14 +102,29 @@ export async function generateSpreadsheet(
   }
 
   const payload = toolUse.input as {
-    title: string;
+    title?: string;
     description?: string;
-    sheets: Array<{ name: string; rows: string[][] }>;
+    sheets?: Array<{ name?: string; rows?: string[][] }>;
   };
 
+  if (!payload || !Array.isArray(payload.sheets) || payload.sheets.length === 0) {
+    console.warn('[spreadsheet] malformed tool output', JSON.stringify(toolUse.input).slice(0, 500));
+    writer.send('error', {
+      message: 'Model returned a spreadsheet tool call with no sheets. Please retry.',
+    });
+    writer.end();
+    return;
+  }
+
+  // Normalize each sheet so missing fields don't blow up downstream.
+  const safeSheets: Array<{ name: string; rows: string[][] }> = payload.sheets.map((sh, i) => ({
+    name: (sh?.name ?? `Sheet ${i + 1}`).slice(0, 60),
+    rows: Array.isArray(sh?.rows) ? (sh.rows as string[][]) : [],
+  }));
+
   // Stream sheet_row events row-by-row (client incrementally renders).
-  for (let s = 0; s < payload.sheets.length; s++) {
-    const sh = payload.sheets[s];
+  for (let s = 0; s < safeSheets.length; s++) {
+    const sh = safeSheets[s];
     writer.send('sheet_meta', { index: s, name: sh.name, rowCount: sh.rows.length });
     for (let r = 0; r < sh.rows.length; r++) {
       writer.send('sheet_row', { sheetIndex: s, rowIndex: r, cells: sh.rows[r] });
@@ -117,10 +132,10 @@ export async function generateSpreadsheet(
   }
 
   // Persist.
-  const sheets: ISheet[] = payload.sheets.map((sh) => ({ name: sh.name, rows: sh.rows }));
+  const sheets: ISheet[] = safeSheets.map((sh) => ({ name: sh.name, rows: sh.rows }));
   const doc = await SpreadsheetFile.create({
     userId,
-    title: payload.title,
+    title: payload.title ?? req.topic.slice(0, 80),
     description: payload.description,
     sheets,
     sourcePrompt: req.topic,
