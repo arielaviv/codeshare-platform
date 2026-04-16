@@ -60,13 +60,17 @@ export async function ensureFormatterToolchain(
     );
   }
 
-  const pipResult = await sbx.commands.run('pip install --quiet pypandoc', {
-    timeoutMs: PYPANDOC_INSTALL_TIMEOUT_MS,
-  });
+  // pypandoc (python wrapper), reportlab (cover wraps + kit PDFs), pypdf
+  // (read page count out of the generated book.pdf to compute spine width),
+  // qrcode (copyright certificate watermark).
+  const pipResult = await sbx.commands.run(
+    'pip install --quiet pypandoc reportlab pypdf "qrcode[pil]"',
+    { timeoutMs: PYPANDOC_INSTALL_TIMEOUT_MS }
+  );
 
   if (pipResult.exitCode !== 0) {
     throw new Error(
-      `pypandoc install failed (pip exit ${pipResult.exitCode}): ` +
+      `Python deps install failed (pip exit ${pipResult.exitCode}): ` +
         (pipResult.stderr.slice(0, 400) || pipResult.error || 'unknown error')
     );
   }

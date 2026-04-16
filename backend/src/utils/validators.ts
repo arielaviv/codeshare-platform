@@ -295,6 +295,11 @@ export const formatBookSchema = z.object({
   sessionId: z.string().optional(),
 });
 
+export const bundleBookSchema = z.object({
+  bookId: z.string().min(1).max(64),
+  sessionId: z.string().optional(),
+});
+
 export const acceptDeliverySchema = z.object({
   planId: z
     .string()
@@ -328,4 +333,5 @@ export type PolishBookInput = z.infer<typeof polishBookSchema>;
 export type AuditBookInput = z.infer<typeof auditBookSchema>;
 export type ReEditChapterInput = z.infer<typeof reEditChapterSchema>;
 export type FormatBookInput = z.infer<typeof formatBookSchema>;
+export type BundleBookInput = z.infer<typeof bundleBookSchema>;
 export type AcceptDeliveryInput = z.infer<typeof acceptDeliverySchema>;

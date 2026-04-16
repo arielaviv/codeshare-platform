@@ -13,6 +13,7 @@ import {
   chapterDraftingRateLimiter,
   bookAuditRateLimiter,
   bookFormatRateLimiter,
+  bookBundleRateLimiter,
 } from '../middleware/rateLimit.middleware';
 import { getCodeExplanation } from '../services/ai.service';
 import { chatWithTools } from '../services/ai-chat.service';
@@ -42,6 +43,7 @@ import {
   auditBookSchema,
   reEditChapterSchema,
   formatBookSchema,
+  bundleBookSchema,
 } from '../utils/validators';
 import { generateBook } from '../services/book-agent.service';
 import type { BookAgentSSEWriter } from '../services/book-agent.service';
@@ -54,6 +56,7 @@ import { runContinuityAudit } from '../services/book/continuity-auditor.service'
 import { runLineEdit } from '../services/book/line-editor.service';
 import { runCopyEdit } from '../services/book/copy-editor.service';
 import { formatBook } from '../services/book/formatter.service';
+import { bundleBook } from '../services/book/bundler.service';
 import { ApiError } from '../middleware/error.middleware';
 import type { ChatMessage, AgentRequest } from '../types/chat';
 import { debitForFeature } from '../services/wallet.service';
@@ -1367,6 +1370,67 @@ router.post(
         const message = innerErr instanceof Error ? innerErr.message : String(innerErr);
         try {
           writer.send('error', { message: `Format crashed: ${message}` });
+          writer.end();
+        } catch { /* ignore */ }
+      }
+    } catch (err) {
+      if (!res.headersSent) next(err);
+      else res.end();
+    }
+  }
+);
+
+/**
+ * Mr8 Book — bundle-book SSE endpoint (Slice 7.iii).
+ * Zips the contents of the sandbox's `/home/user/book/build/` (plus later
+ * audio + translations) into `Mr8-Book-<slug>-<YYYYMMDD>.zip`, mirrors to
+ * `/uploads/books/<userId>/<bookId>/bundle/`, sets `book.bundleUrl` +
+ * `book.publishedBundleAt` + `book.status = 'done'`. Streams
+ * `bundle.progress { pct }` every ~10%, terminal `bundle_ready` +
+ * `stage_complete { stage: 'export' }`.
+ */
+router.post(
+  '/bundle-book',
+  authenticate,
+  bookBundleRateLimiter,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const validation = bundleBookSchema.safeParse(req.body);
+      if (!validation.success) throw new ApiError(validation.error.errors[0].message, 400);
+      if (!req.user) throw new ApiError('Unauthorized', 401);
+
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders();
+
+      let closed = false;
+      req.on('close', () => { closed = true; });
+
+      const writer = {
+        send(event: string, data: unknown) {
+          if (closed) return;
+          res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        },
+        end() {
+          if (!closed) res.end();
+        },
+      };
+
+      try {
+        await bundleBook(
+          {
+            bookId: validation.data.bookId,
+            userId: req.user._id,
+            sessionId: validation.data.sessionId,
+          },
+          writer
+        );
+      } catch (innerErr) {
+        const message = innerErr instanceof Error ? innerErr.message : String(innerErr);
+        try {
+          writer.send('error', { message: `Bundle crashed: ${message}` });
           writer.end();
         } catch { /* ignore */ }
       }

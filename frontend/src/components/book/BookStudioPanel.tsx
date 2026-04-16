@@ -29,6 +29,8 @@ import Mr8LogoLoader from '../shared/Mr8LogoLoader';
 import type { LiveReaderHandle } from './LiveReader';
 import type { BookArtifactShape } from './sections/DownloadsSection';
 import { streamBookFormat } from '../../services/bookFormatStream';
+import { streamBookBundle } from '../../services/bookBundleStream';
+import BookReadyCard from './BookReadyCard';
 
 interface Props {
   bookId: string;
@@ -188,9 +190,13 @@ export default function BookStudioPanel({ bookId, liveMode, liveReaderRef, initi
     [book, bookId]
   );
 
-  // Export / format state — drives the toolbar's Export button + live-updates
-  // the DownloadsSection rows as each pandoc target finishes.
+  // Export chain state. A single click walks Format → Bundle → BookReadyCard,
+  // so the user gets one button and one "done" moment.
   const [exportRunning, setExportRunning] = useState(false);
+  const [bookReady, setBookReady] = useState<{
+    bundleUrl: string;
+    bundleSizeBytes: number;
+  } | null>(null);
 
   const draftedChapterCount = (book?.chapters ?? []).filter(
     (c) => c.status === 'drafted' || c.status === 'edited' || c.status === 'proofed'
@@ -204,10 +210,78 @@ export default function BookStudioPanel({ bookId, liveMode, liveReaderRef, initi
       ? 'Draft all chapters before exporting'
       : undefined;
 
+  const appendArtifact = useCallback(
+    (a: { kind: BookArtifactShape['kind']; url: string; sizeBytes: number }) => {
+      setBook((prev) => {
+        if (!prev) return prev;
+        const without = (prev.artifacts ?? []).filter((x) => x.kind !== a.kind);
+        return {
+          ...prev,
+          artifacts: [
+            ...without,
+            {
+              kind: a.kind,
+              url: a.url,
+              sizeBytes: a.sizeBytes,
+              builtAt: new Date().toISOString(),
+              lang: 'en',
+            },
+          ],
+        };
+      });
+    },
+    []
+  );
+
+  const runBundleStage = useCallback((bookId: string) => {
+    setBook((prev) => (prev ? { ...prev, status: 'bundling' } : prev));
+    streamBookBundle(
+      { bookId },
+      {
+        onProgress: () => {},
+        onBundleReady: (data) => {
+          appendArtifact({ kind: 'bundle-zip', url: data.bundleUrl, sizeBytes: data.sizeBytes });
+          setBook((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  bundleUrl: data.bundleUrl,
+                  status: 'done',
+                }
+              : prev
+          );
+          setBookReady({ bundleUrl: data.bundleUrl, bundleSizeBytes: data.sizeBytes });
+        },
+        onStageComplete: () => {
+          setExportRunning(false);
+          setSection('downloads');
+        },
+        onError: (message) => {
+          console.error('[book-bundle] error:', message);
+          setExportRunning(false);
+          setBook((prev) => (prev ? { ...prev, status: 'formatting' } : prev));
+        },
+      }
+    );
+  }, [appendArtifact]);
+
   const startExport = useCallback(() => {
     if (!book || exportRunning) return;
     setExportRunning(true);
-    // Optimistic: flip status to 'formatting' so the stepper lights up immediately.
+    setBookReady(null);
+
+    // Fast path — PDF + EPUB + DOCX already built: skip format, bundle directly.
+    const artifacts = book.artifacts ?? [];
+    const hasCore =
+      artifacts.some((a) => a.kind === 'pdf') &&
+      artifacts.some((a) => a.kind === 'epub') &&
+      artifacts.some((a) => a.kind === 'docx');
+    if (hasCore) {
+      runBundleStage(book._id);
+      return;
+    }
+
+    // Otherwise: format → then bundle on format stage_complete.
     setBook((prev) => (prev ? { ...prev, status: 'formatting' } : prev));
     streamBookFormat(
       { bookId: book._id },
@@ -215,43 +289,13 @@ export default function BookStudioPanel({ bookId, liveMode, liveReaderRef, initi
         onStageStarted: () => {},
         onBuilding: () => {},
         onReady: (data) => {
-          // Live-append the new artifact to the book so DownloadsSection
-          // lights up row-by-row without waiting for the terminal event.
-          setBook((prev) => {
-            if (!prev) return prev;
-            const without = (prev.artifacts ?? []).filter((a) => a.kind !== data.kind);
-            const nextArtifact: BookArtifactShape = {
-              kind: data.kind,
-              url: data.url,
-              sizeBytes: data.sizeBytes,
-              builtAt: new Date().toISOString(),
-              lang: 'en',
-            };
-            return { ...prev, artifacts: [...without, nextArtifact] };
-          });
+          appendArtifact({ kind: data.kind, url: data.url, sizeBytes: data.sizeBytes });
         },
         onCoverReady: (data) => {
-          setBook((prev) => {
-            if (!prev) return prev;
-            const without = (prev.artifacts ?? []).filter((a) => a.kind !== data.kind);
-            return {
-              ...prev,
-              artifacts: [
-                ...without,
-                {
-                  kind: data.kind,
-                  url: data.url,
-                  sizeBytes: data.sizeBytes,
-                  builtAt: new Date().toISOString(),
-                  lang: 'en',
-                },
-              ],
-            };
-          });
+          appendArtifact({ kind: data.kind, url: data.url, sizeBytes: data.sizeBytes });
         },
         onStageComplete: () => {
-          setExportRunning(false);
-          setSection('downloads');
+          runBundleStage(book._id);
         },
         onError: (message) => {
           console.error('[book-format] error:', message);
@@ -260,7 +304,7 @@ export default function BookStudioPanel({ bookId, liveMode, liveReaderRef, initi
         },
       }
     );
-  }, [book, exportRunning]);
+  }, [book, exportRunning, appendArtifact, runBundleStage]);
 
   // Convert coverVariants into CoverCellData (reuses the chat picker's shape).
   const coverCells: CoverCellData[] = useMemo(() => {
@@ -314,8 +358,12 @@ export default function BookStudioPanel({ bookId, liveMode, liveReaderRef, initi
   const activeChapter = chapters.find((c) => c.n === activeChapterN) ?? chapters[0] ?? null;
   const selectedCover = book.coverVariants?.find((v) => v.idx === book.selectedCoverIdx) ?? null;
 
+  const totalWordCount = (book.chapters ?? [])
+    .map((c) => c.wordCount ?? 0)
+    .reduce((a, b) => a + b, 0);
+
   return (
-    <div className={`h-full flex flex-col bg-white dark:bg-[#0A0A0A] book-theme-${theme.id}`}>
+    <div className={`h-full flex flex-col bg-white dark:bg-[#0A0A0A] book-theme-${theme.id} relative`}>
       <BookStudioToolbar
         title={book.title}
         saveStatus={saveStatus}
@@ -326,6 +374,31 @@ export default function BookStudioPanel({ bookId, liveMode, liveReaderRef, initi
         exportRunning={exportRunning}
         exportDisabledReason={exportDisabledReason}
       />
+      {bookReady && (
+        <div
+          className="absolute top-14 right-6 z-30"
+          style={{ animation: 'mr8-fade-in-soft 0.35s ease-out' }}
+        >
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setBookReady(null)}
+              className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-surface-secondary dark:bg-[#1A1A1A] border border-edge dark:border-[#2A2A2A] text-ink-tertiary dark:text-[#888] hover:text-ink dark:hover:text-[#E8E8E8] flex items-center justify-center text-xs z-10"
+              aria-label="Dismiss"
+            >
+              ×
+            </button>
+            <BookReadyCard
+              title={book.title}
+              author={book.author}
+              coverImageUrl={selectedCover?.imageUrl}
+              bundleUrl={bookReady.bundleUrl}
+              bundleSizeBytes={bookReady.bundleSizeBytes}
+              wordCount={totalWordCount}
+            />
+          </div>
+        </div>
+      )}
       <BookStageStepper book={book} />
       <div className="flex-1 min-h-0 flex">
         <ChaptersStrip
