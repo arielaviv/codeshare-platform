@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
 import { ComputerProvider } from './contexts/ComputerContext';
 import { PrizeOrchestratorProvider } from './contexts/PrizeOrchestratorContext';
@@ -23,6 +23,7 @@ import WelcomeSpinPage from './pages/WelcomeSpinPage';
 import PricingPage from './pages/PricingPage';
 import AccountPage from './pages/AccountPage';
 import AnonBuildPage from './pages/AnonBuildPage';
+import FeaturePage from './pages/FeaturePage';
 
 const DebugPrizeOrchestratorPage = import.meta.env.DEV
   ? lazy(() => import('./pages/DebugPrizeOrchestratorPage'))
@@ -41,6 +42,14 @@ function SmartHome() {
   return <HomePage />;
 }
 
+// Remount AIChatPage when the `?session=` param changes so the mount-time
+// hydration effect runs fresh for the newly opened session.
+function ChatRoute() {
+  const [params] = useSearchParams();
+  const sessionKey = params.get('session') ?? 'new';
+  return <AIChatPage key={sessionKey} />;
+}
+
 function App() {
   return (
     <ComputerProvider>
@@ -52,6 +61,7 @@ function App() {
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/auth/callback" element={<AuthCallback />} />
           <Route path="/pricing" element={<PricingPage />} />
+          <Route path="/features/:slug" element={<FeaturePage />} />
           <Route path="/account" element={<ProtectedRoute><AccountPage /></ProtectedRoute>} />
           <Route path="/build" element={<AnonBuildPage />} />
           <Route
@@ -66,7 +76,7 @@ function App() {
             <Route path="/project/:id" element={<ProjectViewPage />} />
             <Route
               path="/chat"
-              element={<ProtectedRoute><AIChatPage /></ProtectedRoute>}
+              element={<ProtectedRoute><ChatRoute /></ProtectedRoute>}
             />
             <Route
               path="/profile/:id"

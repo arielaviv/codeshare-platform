@@ -3,6 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import LandingHeader from '../components/LandingHeader';
 import TycoonTrustBar from '../components/TycoonTrustBar';
+import Mr8Showcase from '../components/landing/Mr8Showcase';
+import Mr8Capabilities from '../components/landing/Mr8Capabilities';
+import Mr8AssistantLoop from '../components/landing/Mr8AssistantLoop';
+import Mr8Integrations from '../components/landing/Mr8Integrations';
+import LandingFooter from '../components/landing/LandingFooter';
 
 const SUGGESTIONS = [
   'Build a Porsche GT3 RS showcase with hero images',
@@ -56,7 +61,7 @@ export default function LandingPage() {
         }}
       />
 
-      <main className="relative z-10 flex-1 flex flex-col items-center justify-center px-6 py-10 text-center">
+      <main className="relative z-10 flex flex-col items-center justify-center px-6 py-10 text-center min-h-[calc(100vh-64px)]">
         <TycoonTrustBar />
 
         <h1 className="text-5xl md:text-7xl font-bold tracking-tight mb-8 leading-[1.04] text-ink dark:text-white">
@@ -103,6 +108,11 @@ export default function LandingPage() {
         </div>
       </main>
 
+      <Mr8Showcase />
+      <Mr8Capabilities />
+      <Mr8AssistantLoop />
+      <Mr8Integrations />
+      <LandingFooter />
     </div>
   );
 }
