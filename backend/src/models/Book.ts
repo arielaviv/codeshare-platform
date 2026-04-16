@@ -125,6 +125,18 @@ export type ChapterStatus =
   | 'proofed'
   | 'error';
 
+/**
+ * Manual edits to chapter prose, per variant. Populated by the inline Book
+ * Editor's ChapterProseEditor — saved to Mongo so edits survive sandbox
+ * death and the Formatter can read them without a live sandbox. Formatter
+ * prefers `manualText` over the sandbox files at `*Path`.
+ */
+export interface IBookChapterManualText {
+  draft?: string;
+  edited?: string;
+  proofed?: string;
+}
+
 export interface IBookChapter {
   n: number;
   title: string;
@@ -144,6 +156,8 @@ export interface IBookChapter {
   skippedChunkIdxs?: number[];
   /** Last error for this chapter (draft/edit/proof). */
   errorMessage?: string;
+  /** User-authored prose per variant (inline Book Editor, Slice 10j). */
+  manualText?: IBookChapterManualText;
 }
 
 export type EditAggressiveness = 'light' | 'standard' | 'heavy';
@@ -201,6 +215,16 @@ export interface IBook extends Document {
   editingChoices?: IBookEditingChoices;
   /** AI-picked at outline-complete from pickThemeForOutline(); user-overridable via Studio dropdown. */
   themeId: BookThemeId;
+  /** Short author biography — printed on the back cover / about-the-author page. */
+  bio?: string;
+  /** Optional dedication page ("For my grandmother."). */
+  dedication?: string;
+  /** Optional epigraph page (quote + attribution). */
+  epigraph?: string;
+  /** Optional acknowledgements page (back matter). */
+  acknowledgements?: string;
+  /** Optional override for the generated copyright page text. */
+  copyrightPageText?: string;
   /** User-selected export / narration / translation settings (Slice 7+). */
   production?: IBookProduction;
   /** Every file the Formatter / Bundler produced — source of truth for the Downloads section. */
@@ -239,6 +263,15 @@ const outlineSchema = new Schema<IBookOutline>(
   { _id: false }
 );
 
+const chapterManualTextSchema = new Schema<IBookChapterManualText>(
+  {
+    draft: { type: String, required: false, maxlength: 50_000 },
+    edited: { type: String, required: false, maxlength: 50_000 },
+    proofed: { type: String, required: false, maxlength: 50_000 },
+  },
+  { _id: false }
+);
+
 const chapterSchema = new Schema<IBookChapter>(
   {
     n: { type: Number, required: true, min: 1 },
@@ -259,6 +292,7 @@ const chapterSchema = new Schema<IBookChapter>(
     editingNotes: { type: String, required: false, maxlength: 500 },
     skippedChunkIdxs: { type: [Number], default: undefined },
     errorMessage: { type: String, required: false, maxlength: 1000 },
+    manualText: { type: chapterManualTextSchema, required: false },
   },
   { _id: false }
 );
@@ -397,6 +431,11 @@ const bookSchema = new Schema<IBook>(
       enum: BOOK_THEME_IDS,
       default: 'literary-classic',
     },
+    bio: { type: String, required: false, maxlength: 500 },
+    dedication: { type: String, required: false, maxlength: 500 },
+    epigraph: { type: String, required: false, maxlength: 500 },
+    acknowledgements: { type: String, required: false, maxlength: 2000 },
+    copyrightPageText: { type: String, required: false, maxlength: 2000 },
     production: { type: productionSchema, required: false },
     artifacts: { type: [buildArtifactSchema], default: undefined },
     bundleUrl: { type: String, required: false, maxlength: 500 },

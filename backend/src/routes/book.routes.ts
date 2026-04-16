@@ -2,7 +2,13 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { authenticate } from '../middleware/auth.middleware';
 import { Book } from '../models/Book';
 import { ApiError } from '../middleware/error.middleware';
-import { selectCoverSchema, updateBookSchema, approveBookSchema } from '../utils/validators';
+import {
+  selectCoverSchema,
+  updateBookSchema,
+  approveBookSchema,
+  updateChapterProseSchema,
+  replaceChaptersSchema,
+} from '../utils/validators';
 import { loadE2BConfig, connectComputeSandbox } from '../services/computer/e2b-client';
 import mongoose from 'mongoose';
 
@@ -45,10 +51,16 @@ router.patch('/:id', authenticate, async (req: Request, res: Response, next: Nex
     if (book.userId.toString() !== req.user._id.toString()) {
       throw new ApiError('Forbidden', 403);
     }
-    const { themeId, author, title } = validated.data;
+    const { themeId, author, title, bio, dedication, epigraph, acknowledgements, copyrightPageText } =
+      validated.data;
     if (themeId) book.themeId = themeId;
     if (typeof author === 'string') book.author = author.trim().length > 0 ? author.trim() : undefined;
     if (typeof title === 'string' && title.trim().length > 0) book.title = title.trim();
+    if (typeof bio === 'string') book.bio = bio.trim().length > 0 ? bio.trim() : undefined;
+    if (typeof dedication === 'string') book.dedication = dedication.trim().length > 0 ? dedication.trim() : undefined;
+    if (typeof epigraph === 'string') book.epigraph = epigraph.trim().length > 0 ? epigraph.trim() : undefined;
+    if (typeof acknowledgements === 'string') book.acknowledgements = acknowledgements.trim().length > 0 ? acknowledgements.trim() : undefined;
+    if (typeof copyrightPageText === 'string') book.copyrightPageText = copyrightPageText.trim().length > 0 ? copyrightPageText.trim() : undefined;
     await book.save();
     res.json({
       ok: true,
@@ -57,6 +69,11 @@ router.patch('/:id', authenticate, async (req: Request, res: Response, next: Nex
         title: book.title,
         author: book.author,
         themeId: book.themeId,
+        bio: book.bio,
+        dedication: book.dedication,
+        epigraph: book.epigraph,
+        acknowledgements: book.acknowledgements,
+        copyrightPageText: book.copyrightPageText,
       },
     });
   } catch (err) {
@@ -135,6 +152,180 @@ router.get('/:id/chapter/:n', authenticate, async (req: Request, res: Response, 
     next(err);
   }
 });
+
+/**
+ * PATCH /api/books/:id/chapter/:n/prose — save manual edits to a chapter's
+ * prose. Body: `{ text, variant: 'draft'|'edited'|'proofed' }`.
+ *
+ * Persists to `chapter.manualText[variant]` in Mongo (source of truth — edits
+ * survive sandbox death). Best-effort also writes to the sandbox file at
+ * `chapters/chNN.md` / `edited/chNN.md` / `proofed/chNN.md` so the Mr8
+ * Computer panel stays in sync. The Formatter prefers `manualText` over
+ * sandbox files during `buildManuscript`.
+ */
+router.patch(
+  '/:id/chapter/:n/prose',
+  authenticate,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      if (!req.user) throw new ApiError('Unauthorized', 401);
+      if (!mongoose.isValidObjectId(req.params.id)) {
+        throw new ApiError('Invalid book id', 400);
+      }
+      const n = parseInt(req.params.n, 10);
+      if (!Number.isFinite(n) || n < 1) throw new ApiError('Invalid chapter number', 400);
+
+      const validated = updateChapterProseSchema.safeParse(req.body);
+      if (!validated.success) {
+        throw new ApiError(validated.error.errors[0]?.message ?? 'Invalid input', 400);
+      }
+      const { text, variant } = validated.data;
+
+      const book = await Book.findById(req.params.id);
+      if (!book) throw new ApiError('Book not found', 404);
+      if (book.userId.toString() !== req.user._id.toString()) throw new ApiError('Forbidden', 403);
+
+      const chapters = book.chapters ?? [];
+      const chapter = chapters.find((c) => c.n === n);
+      if (!chapter) throw new ApiError(`Chapter ${n} not found`, 404);
+
+      chapter.manualText = chapter.manualText ?? {};
+      chapter.manualText[variant] = text;
+
+      // Recompute word count from the newest text in the variant chain.
+      const latest = chapter.manualText.proofed ?? chapter.manualText.edited ?? chapter.manualText.draft ?? text;
+      const wordCount = latest.trim().match(/\S+/g)?.length ?? 0;
+      chapter.wordCount = wordCount;
+
+      book.markModified('chapters');
+      await book.save();
+
+      // Best-effort sandbox write so the Mr8 Computer panel stays in sync.
+      // Doesn't block the response — failure here is fine because Mongo is
+      // the source of truth from this point on.
+      if (book.sandboxId) {
+        void (async () => {
+          try {
+            const config = loadE2BConfig();
+            const sbx = await connectComputeSandbox(config, book.sandboxId as string);
+            const paddedN = String(n).padStart(2, '0');
+            const subdir =
+              variant === 'proofed' ? 'proofed' : variant === 'edited' ? 'edited' : 'chapters';
+            await sbx.commands.run(`mkdir -p /home/user/book/${subdir}`, { timeoutMs: 5_000 }).catch(() => {});
+            await sbx.files.write(`/home/user/book/${subdir}/ch${paddedN}.md`, text);
+            await sbx.pause().catch(() => {});
+          } catch {
+            // ignore
+          }
+        })();
+      }
+
+      res.json({
+        ok: true,
+        chapter: {
+          n,
+          variant,
+          wordCount: chapter.wordCount,
+        },
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * PUT /api/books/:id/chapters — replace the book's chapters array (reorder,
+ * rename, insert, delete). Body: `{ chapters: IBookChapter[] }` where each
+ * entry carries the new `n` in server-expected order.
+ *
+ * Any chapter number that existed before but is absent from the new list
+ * gets archived: its sandbox files (if any) are moved to
+ * `chapters/_archived/chNN_<ts>.md` so they're not lost silently. New
+ * chapters default to `pending` status without paths. Existing chapters'
+ * status / path pointers / manualText are preserved by `n` match.
+ */
+router.put(
+  '/:id/chapters',
+  authenticate,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      if (!req.user) throw new ApiError('Unauthorized', 401);
+      if (!mongoose.isValidObjectId(req.params.id)) {
+        throw new ApiError('Invalid book id', 400);
+      }
+      const validated = replaceChaptersSchema.safeParse(req.body);
+      if (!validated.success) {
+        throw new ApiError(validated.error.errors[0]?.message ?? 'Invalid input', 400);
+      }
+      const book = await Book.findById(req.params.id);
+      if (!book) throw new ApiError('Book not found', 404);
+      if (book.userId.toString() !== req.user._id.toString()) throw new ApiError('Forbidden', 403);
+
+      const oldByN = new Map<number, NonNullable<typeof book.chapters>[number]>();
+      for (const c of book.chapters ?? []) oldByN.set(c.n, c);
+
+      const newChapters = validated.data.chapters.map((c, idx) => {
+        const prior = oldByN.get(c.n);
+        return {
+          n: idx + 1, // renumber sequentially in the server's authoritative order
+          title: c.title,
+          beat: c.beat,
+          estimatedWords: c.estimatedWords,
+          status: c.status ?? prior?.status ?? 'pending',
+          draftPath: c.draftPath ?? prior?.draftPath,
+          editedPath: c.editedPath ?? prior?.editedPath,
+          proofedPath: c.proofedPath ?? prior?.proofedPath,
+          wordCount: c.wordCount ?? prior?.wordCount,
+          editingNotes: prior?.editingNotes,
+          skippedChunkIdxs: prior?.skippedChunkIdxs,
+          errorMessage: prior?.errorMessage,
+          audioPath: prior?.audioPath,
+          manualText: prior?.manualText,
+        };
+      });
+
+      // Identify deleted chapters (old `n` not present in new set) and archive
+      // their sandbox files so prose isn't silently lost.
+      const retainedNs = new Set(validated.data.chapters.map((c) => c.n));
+      const deleted = Array.from(oldByN.values()).filter((c) => !retainedNs.has(c.n));
+
+      if (deleted.length > 0 && book.sandboxId) {
+        void (async () => {
+          try {
+            const config = loadE2BConfig();
+            const sbx = await connectComputeSandbox(config, book.sandboxId as string);
+            const ts = Date.now();
+            await sbx.commands.run(`mkdir -p /home/user/book/chapters/_archived`, { timeoutMs: 5_000 }).catch(() => {});
+            for (const ch of deleted) {
+              for (const p of [ch.draftPath, ch.editedPath, ch.proofedPath]) {
+                if (!p) continue;
+                await sbx.commands.run(
+                  `mv /home/user/book/${p} /home/user/book/chapters/_archived/$(basename ${p} .md)_${ts}.md 2>/dev/null || true`,
+                  { timeoutMs: 5_000 }
+                ).catch(() => {});
+              }
+            }
+            await sbx.pause().catch(() => {});
+          } catch {
+            // ignore
+          }
+        })();
+      }
+
+      book.chapters = newChapters;
+      book.markModified('chapters');
+      await book.save();
+
+      res.json({
+        ok: true,
+        chapters: newChapters.map((c) => ({ n: c.n, title: c.title })),
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
 
 /** PATCH /api/books/:id/cover — persist the user's selected cover idx. */
 router.patch('/:id/cover', authenticate, async (req: Request, res: Response, next: NextFunction) => {

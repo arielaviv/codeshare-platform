@@ -118,31 +118,109 @@ function buildGeometryString(theme: BookThemeSpec, overrideTrim?: string): strin
 }
 
 /**
- * Concatenate each chapter's best-available markdown, normalize scene
- * breaks, emit one `manuscript.md` ready for pandoc.
+ * Wraps a front/back-matter section in raw LaTeX so it gets its own page
+ * with no running head or page number. Each section is centered vertically
+ * on the page. Blank sections are skipped by the caller.
+ */
+function frontMatterBlock(title: string | null, body: string, centered = true): string {
+  const safe = body.trim().replace(/\n{3,}/g, '\n\n');
+  const titleLine = title ? `\\begin{center}\\textsc{${title}}\\end{center}\n\n` : '';
+  const alignOpen = centered ? '\\begin{center}' : '';
+  const alignClose = centered ? '\\end{center}' : '';
+  return [
+    '```{=latex}',
+    '\\clearpage',
+    '\\thispagestyle{empty}',
+    '\\vspace*{\\fill}',
+    alignOpen,
+    '```',
+    '',
+    titleLine + safe,
+    '',
+    '```{=latex}',
+    alignClose,
+    '\\vspace*{\\fill}',
+    '\\clearpage',
+    '```',
+    '',
+  ].join('\n');
+}
+
+function defaultCopyrightPageText(title: string, author: string): string {
+  const year = new Date().getUTCFullYear();
+  const authorLine = author ? `© ${year} ${author}. All rights reserved.` : `© ${year}. All rights reserved.`;
+  return [
+    title,
+    '',
+    authorLine,
+    '',
+    'No part of this book may be reproduced without written permission.',
+    '',
+    'Typeset with Mr8.',
+  ].join('\n');
+}
+
+/**
+ * Concatenate each chapter's best-available prose, normalize scene breaks,
+ * emit one `manuscript.md` ready for pandoc. Prepends front matter
+ * (copyright / dedication / epigraph) and appends back matter
+ * (acknowledgements / about the author) when those fields are set on the
+ * book.
  *
- * Preference order per chapter: proofed > edited > raw draft. If a chapter
- * has none, it's skipped (with a warning written into the manuscript).
+ * Per-chapter prose preference order:
+ *   manualText.proofed → manualText.edited → manualText.draft →
+ *   sandbox proofedPath → sandbox editedPath → sandbox draftPath
+ *
+ * `manualText` comes from the inline Book Editor and is authoritative; it
+ * lets the Formatter run without a live sandbox (e.g. after `sbx.pause()`
+ * TTL expired between drafting and export).
  */
 async function buildManuscript(
   sbx: ComputeSandbox,
-  chapters: IBookChapter[]
+  chapters: IBookChapter[],
+  frontBack: {
+    title: string;
+    author: string;
+    bio?: string;
+    dedication?: string;
+    epigraph?: string;
+    acknowledgements?: string;
+    copyrightPageText?: string;
+  }
 ): Promise<{ manuscriptMd: string; includedChapters: number }> {
-  const parts: string[] = [];
+  const frontParts: string[] = [];
+  const copyright = frontBack.copyrightPageText?.trim()
+    ? frontBack.copyrightPageText.trim()
+    : defaultCopyrightPageText(frontBack.title, frontBack.author);
+  frontParts.push(frontMatterBlock(null, copyright, false));
+
+  if (frontBack.dedication?.trim()) {
+    frontParts.push(frontMatterBlock(null, `\\textit{${frontBack.dedication.trim()}}`, true));
+  }
+  if (frontBack.epigraph?.trim()) {
+    frontParts.push(frontMatterBlock(null, frontBack.epigraph.trim(), true));
+  }
+
+  const chapterParts: string[] = [];
   let included = 0;
   for (const ch of chapters) {
-    const relPath = ch.proofedPath ?? ch.editedPath ?? ch.draftPath;
-    if (!relPath) {
-      continue;
+    let body: string | undefined;
+
+    const manual =
+      ch.manualText?.proofed ?? ch.manualText?.edited ?? ch.manualText?.draft;
+    if (manual && manual.trim()) {
+      body = manual;
+    } else {
+      const relPath = ch.proofedPath ?? ch.editedPath ?? ch.draftPath;
+      if (!relPath) continue;
+      try {
+        const raw = await sbx.files.read(`${SANDBOX_BOOK_DIR}/${relPath}`);
+        body = typeof raw === 'string' ? raw : String(raw);
+      } catch {
+        continue;
+      }
     }
-    let body: string;
-    try {
-      const raw = await sbx.files.read(`${SANDBOX_BOOK_DIR}/${relPath}`);
-      body = typeof raw === 'string' ? raw : String(raw);
-    } catch {
-      continue;
-    }
-    if (!body.trim()) continue;
+    if (!body || !body.trim()) continue;
 
     // Strip any existing `# Title` line if the drafter emitted one — we'll
     // add the canonical `# Title` ourselves below so pandoc's `--toc` picks
@@ -155,10 +233,21 @@ async function buildManuscript(
     // working break.
     const sceneBreakSafe = stripped.replace(/^\s*\*\*\*\s*$/gm, '\n`\\sceneBreak`{=latex}\n\n---\n');
 
-    parts.push(`# ${ch.title}\n\n${sceneBreakSafe.trim()}\n`);
+    chapterParts.push(`# ${ch.title}\n\n${sceneBreakSafe.trim()}\n`);
     included++;
   }
-  const manuscriptMd = parts.join('\n\n');
+
+  const backParts: string[] = [];
+  if (frontBack.acknowledgements?.trim()) {
+    backParts.push(frontMatterBlock('Acknowledgements', frontBack.acknowledgements.trim(), false));
+  }
+  if (frontBack.bio?.trim() && frontBack.author) {
+    backParts.push(frontMatterBlock('About the Author', frontBack.bio.trim(), false));
+  }
+
+  const manuscriptMd = [...frontParts, chapterParts.join('\n\n'), ...backParts]
+    .filter((s) => s.trim().length > 0)
+    .join('\n\n');
   return { manuscriptMd, includedChapters: included };
 }
 
@@ -965,7 +1054,15 @@ export async function formatBook(
 
     // --- Build the combined manuscript --------------------------------------
     writer.send('format.manuscript_building', {});
-    const { manuscriptMd, includedChapters } = await buildManuscript(sbx, book.chapters);
+    const { manuscriptMd, includedChapters } = await buildManuscript(sbx, book.chapters, {
+      title: book.title,
+      author: book.author ?? '',
+      bio: book.bio,
+      dedication: book.dedication,
+      epigraph: book.epigraph,
+      acknowledgements: book.acknowledgements,
+      copyrightPageText: book.copyrightPageText,
+    });
     if (includedChapters === 0) {
       throw new Error('No chapter prose found on disk — nothing to format');
     }

@@ -233,8 +233,50 @@ export const updateBookSchema = z
       .optional(),
     author: z.string().max(120, 'Author name too long').optional(),
     title: z.string().min(1).max(200).optional(),
+    bio: z.string().max(500).optional(),
+    dedication: z.string().max(500).optional(),
+    epigraph: z.string().max(500).optional(),
+    acknowledgements: z.string().max(2000).optional(),
+    copyrightPageText: z.string().max(2000).optional(),
   })
   .refine((v) => Object.keys(v).length > 0, { message: 'At least one field is required' });
+
+/**
+ * Manual-prose patch for a single chapter. Frontend ChapterProseEditor
+ * debounces and sends this per variant. The backend persists to
+ * `chapter.manualText[variant]` + best-effort syncs to the E2B sandbox.
+ */
+export const updateChapterProseSchema = z.object({
+  text: z.string().max(50_000, 'Chapter too long'),
+  variant: z.enum(['draft', 'edited', 'proofed']),
+});
+
+/**
+ * Replace the book's chapters array (reorder, rename, insert, delete).
+ * The backend renumbers `n` fields in server order and archives any sandbox
+ * file for a chapter number that no longer exists.
+ */
+export const replaceChaptersSchema = z.object({
+  chapters: z
+    .array(
+      z.object({
+        n: z.number().int().min(1).max(100),
+        title: z.string().min(1).max(200),
+        beat: z.string().max(3000),
+        estimatedWords: z.number().int().min(0).max(20_000),
+        /** Omitted on inserts; preserved on reorders/renames so we don't lose draft prose. */
+        status: z
+          .enum(['pending', 'drafting', 'drafted', 'editing', 'edited', 'proofing', 'proofed', 'error'])
+          .optional(),
+        draftPath: z.string().max(200).optional(),
+        editedPath: z.string().max(200).optional(),
+        proofedPath: z.string().max(200).optional(),
+        wordCount: z.number().int().min(0).optional(),
+      })
+    )
+    .min(1, 'Book must have at least one chapter')
+    .max(60, 'Too many chapters'),
+});
 
 export const classifyIntentSchema = z.object({
   prompt: z
@@ -334,4 +376,6 @@ export type AuditBookInput = z.infer<typeof auditBookSchema>;
 export type ReEditChapterInput = z.infer<typeof reEditChapterSchema>;
 export type FormatBookInput = z.infer<typeof formatBookSchema>;
 export type BundleBookInput = z.infer<typeof bundleBookSchema>;
+export type UpdateChapterProseInput = z.infer<typeof updateChapterProseSchema>;
+export type ReplaceChaptersInput = z.infer<typeof replaceChaptersSchema>;
 export type AcceptDeliveryInput = z.infer<typeof acceptDeliverySchema>;
