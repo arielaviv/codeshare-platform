@@ -66,6 +66,8 @@ const preferencesSchema = new Schema<SoulPreferences>(
     colorPalette: { type: String },
     frameworks: { type: [String], default: undefined },
     verbosity: { type: String, enum: ['terse', 'balanced', 'verbose'] },
+    defaultVoiceId: { type: String, maxlength: 60 },
+    defaultVoiceName: { type: String, maxlength: 60 },
   },
   { _id: false }
 );

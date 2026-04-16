@@ -35,6 +35,9 @@ const patchSchema = z.object({
   occupation: z.string().max(80).optional().nullable(),
   aboutYou: z.string().max(2000).optional().nullable(),
   customInstructions: z.string().max(3000).optional().nullable(),
+  // Phase 9H: voice picker writes into preferences.
+  defaultVoiceId: z.string().max(60).optional().nullable(),
+  defaultVoiceName: z.string().max(60).optional().nullable(),
 });
 
 router.patch('/me', authenticate, async (req: Request, res: Response, next: NextFunction) => {
@@ -45,16 +48,26 @@ router.patch('/me', authenticate, async (req: Request, res: Response, next: Next
       return;
     }
     const update: Record<string, unknown> = {};
+    const unset: Record<string, 1> = {};
     for (const [k, v] of Object.entries(parsed.data)) {
-      if (v === null) {
-        update[k] = undefined;
+      if (k === 'defaultVoiceId' || k === 'defaultVoiceName') {
+        if (v === null) {
+          unset[`preferences.${k}`] = 1;
+        } else if (v !== undefined) {
+          update[`preferences.${k}`] = v;
+        }
+      } else if (v === null) {
+        unset[k] = 1;
       } else if (v !== undefined) {
         update[k] = v;
       }
     }
+    const mutation: Record<string, unknown> = {};
+    if (Object.keys(update).length > 0) mutation.$set = update;
+    if (Object.keys(unset).length > 0) mutation.$unset = unset;
     const profile = await SoulProfile.findOneAndUpdate(
       { userId: req.user!._id },
-      { $set: update },
+      Object.keys(mutation).length > 0 ? mutation : { $setOnInsert: { userId: req.user!._id } },
       { new: true, upsert: true }
     );
     res.json({ profile });

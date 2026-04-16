@@ -2,9 +2,10 @@
  * Manus-style Personalization / Settings / Usage overlay (images #30–34).
  * Single modal with a left tab sidebar and a right content panel.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import api from '../../services/api';
 import { usageApi, type UsageRecord } from '../../services/sessionsApi';
+import { voicesApi, type VoiceSummary } from '../../services/voicesApi';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { formatUsd } from '../../utils/formatUsd';
@@ -249,18 +250,31 @@ function UsageTab(): JSX.Element {
   );
 }
 
+interface SoulProfileShape {
+  nickname?: string | null;
+  occupation?: string | null;
+  aboutYou?: string | null;
+  customInstructions?: string | null;
+  preferences?: {
+    defaultVoiceId?: string;
+    defaultVoiceName?: string;
+  };
+}
+
 function PersonalizationTab({ onClose }: { onClose: () => void }): JSX.Element {
-  const [subtab, setSubtab] = useState<'profile' | 'knowledge'>('profile');
+  const [subtab, setSubtab] = useState<'profile' | 'voice' | 'knowledge'>('profile');
   const [loaded, setLoaded] = useState(false);
   const [nickname, setNickname] = useState('');
   const [occupation, setOccupation] = useState('');
   const [aboutYou, setAboutYou] = useState('');
   const [customInstructions, setCustomInstructions] = useState('');
+  const [voiceId, setVoiceId] = useState<string>('');
+  const [voiceName, setVoiceName] = useState<string>('');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     api
-      .get<{ profile: Record<string, string | null> | null }>('/soul/me')
+      .get<{ profile: SoulProfileShape | null }>('/soul/me')
       .then((r) => {
         const p = r.data.profile;
         if (p) {
@@ -268,6 +282,8 @@ function PersonalizationTab({ onClose }: { onClose: () => void }): JSX.Element {
           setOccupation(p.occupation ?? '');
           setAboutYou(p.aboutYou ?? '');
           setCustomInstructions(p.customInstructions ?? '');
+          setVoiceId(p.preferences?.defaultVoiceId ?? '');
+          setVoiceName(p.preferences?.defaultVoiceName ?? '');
         }
         setLoaded(true);
       })
@@ -282,6 +298,8 @@ function PersonalizationTab({ onClose }: { onClose: () => void }): JSX.Element {
         occupation: occupation.trim() || null,
         aboutYou: aboutYou.trim() || null,
         customInstructions: customInstructions.trim() || null,
+        defaultVoiceId: voiceId || null,
+        defaultVoiceName: voiceName || null,
       });
       onClose();
     } catch {
@@ -309,6 +327,17 @@ function PersonalizationTab({ onClose }: { onClose: () => void }): JSX.Element {
           }`}
         >
           Profile
+        </button>
+        <button
+          type="button"
+          onClick={() => setSubtab('voice')}
+          className={`pb-2 text-sm font-medium transition-colors ${
+            subtab === 'voice'
+              ? 'text-ink dark:text-[#E8E8E8] border-b-2 border-ink dark:border-[#E8E8E8]'
+              : 'text-ink-tertiary dark:text-[#666]'
+          }`}
+        >
+          Voice
         </button>
         <button
           type="button"
@@ -418,11 +447,179 @@ function PersonalizationTab({ onClose }: { onClose: () => void }): JSX.Element {
         </>
       )}
 
+      {subtab === 'voice' && (
+        <VoiceSubtab
+          voiceId={voiceId}
+          onPick={(v) => {
+            setVoiceId(v.voiceId);
+            setVoiceName(v.name);
+          }}
+          onClear={() => {
+            setVoiceId('');
+            setVoiceName('');
+          }}
+          onClose={onClose}
+          onSave={save}
+          saving={saving}
+          loaded={loaded}
+        />
+      )}
+
       {subtab === 'knowledge' && (
         <div className="text-sm text-ink-tertiary dark:text-[#666] py-6">
           Knowledge files — upload docs Mr8 can reference across chats. Coming soon.
         </div>
       )}
+    </div>
+  );
+}
+
+interface VoiceSubtabProps {
+  voiceId: string;
+  onPick: (v: VoiceSummary) => void;
+  onClear: () => void;
+  onClose: () => void;
+  onSave: () => void;
+  saving: boolean;
+  loaded: boolean;
+}
+
+function VoiceSubtab({ voiceId, onPick, onClear, onClose, onSave, saving, loaded }: VoiceSubtabProps): JSX.Element {
+  const [voices, setVoices] = useState<VoiceSummary[] | null>(null);
+  const [loadingVoices, setLoadingVoices] = useState(true);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [playingId, setPlayingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLoadingVoices(true);
+    voicesApi
+      .list()
+      .then((r) => setVoices(r.voices))
+      .catch(() => setVoices([]))
+      .finally(() => setLoadingVoices(false));
+    return () => {
+      audioRef.current?.pause();
+    };
+  }, []);
+
+  const playPreview = (v: VoiceSummary) => {
+    if (!v.previewUrl) return;
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    if (playingId === v.voiceId) {
+      setPlayingId(null);
+      return;
+    }
+    const audio = new Audio(v.previewUrl);
+    audio.onended = () => setPlayingId(null);
+    audio.onerror = () => setPlayingId(null);
+    void audio.play().then(() => setPlayingId(v.voiceId)).catch(() => setPlayingId(null));
+    audioRef.current = audio;
+  };
+
+  return (
+    <div>
+      <p className="text-sm text-ink-secondary dark:text-[#A0A0A0] mb-4">
+        Choose the default voice Mr8 uses when generating audio.
+      </p>
+
+      {loadingVoices && (
+        <div className="text-sm text-ink-tertiary dark:text-[#666] py-4">Loading voices…</div>
+      )}
+
+      {!loadingVoices && voices && voices.length === 0 && (
+        <div className="text-sm text-ink-tertiary dark:text-[#666] py-4">
+          No voices available. Add ELEVENLABS_API_KEY to the backend env to fetch them.
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-3 mb-6">
+        {voices?.map((v) => {
+          const selected = voiceId === v.voiceId;
+          const isPlaying = playingId === v.voiceId;
+          return (
+            <button
+              key={v.voiceId}
+              type="button"
+              onClick={() => onPick(v)}
+              className={`relative text-left rounded-lg border p-3 transition-colors ${
+                selected
+                  ? 'border-brand-orange bg-brand-orange-soft dark:bg-brand-orange/15'
+                  : 'border-edge dark:border-[#2A2A2A] hover:border-ink-tertiary dark:hover:border-[#444] bg-surface-secondary dark:bg-[#141414]'
+              }`}
+            >
+              <div className="flex items-start justify-between gap-2 mb-1">
+                <div className="text-sm font-semibold text-ink dark:text-[#E8E8E8] truncate">
+                  {v.name}
+                </div>
+                {v.previewUrl && (
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      playPreview(v);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        playPreview(v);
+                      }
+                    }}
+                    className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full bg-ink dark:bg-white text-white dark:text-ink hover:opacity-90 cursor-pointer"
+                    aria-label={isPlaying ? 'Stop preview' : 'Play preview'}
+                  >
+                    {isPlaying ? (
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                        <rect x="6" y="5" width="4" height="14" />
+                        <rect x="14" y="5" width="4" height="14" />
+                      </svg>
+                    ) : (
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                        <polygon points="6,4 20,12 6,20" />
+                      </svg>
+                    )}
+                  </span>
+                )}
+              </div>
+              <div className="text-[11px] text-ink-tertiary dark:text-[#666] line-clamp-1">
+                {[v.labels?.gender, v.labels?.accent, v.labels?.description].filter(Boolean).join(' · ') || v.category}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="flex items-center justify-between gap-3">
+        <button
+          type="button"
+          onClick={onClear}
+          disabled={!voiceId}
+          className="text-sm text-ink-tertiary dark:text-[#666] hover:text-ink dark:hover:text-[#E8E8E8] disabled:opacity-40 disabled:hover:text-ink-tertiary"
+        >
+          Clear (use default)
+        </button>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 text-sm text-ink-secondary dark:text-[#A0A0A0] hover:text-ink dark:hover:text-[#E8E8E8]"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={saving || !loaded}
+            className="px-4 py-2 rounded bg-ink dark:bg-white text-white dark:text-ink text-sm font-semibold hover:opacity-90 disabled:opacity-60"
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

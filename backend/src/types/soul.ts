@@ -32,6 +32,10 @@ export interface SoulPreferences {
   colorPalette?: string;
   frameworks?: string[];
   verbosity?: 'terse' | 'balanced' | 'verbose';
+  /** ElevenLabs voice id for audio generation; picked in Personalization. */
+  defaultVoiceId?: string;
+  /** Human-facing name cached alongside the id (to render in UI without re-fetching). */
+  defaultVoiceName?: string;
 }
 
 export interface SoulProfile {
