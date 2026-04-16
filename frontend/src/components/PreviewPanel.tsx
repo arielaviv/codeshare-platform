@@ -5,6 +5,7 @@ import { Tooltip } from './ui/Tooltip';
 import { ThemeEditor } from './preview/ThemeEditor';
 import { LibraryPanel } from './preview/LibraryPanel';
 import { EditModeToolbar, type EditPatch } from './preview/EditModeToolbar';
+import Mr8LogoLoader from './shared/Mr8LogoLoader';
 
 type DeviceMode = 'desktop' | 'tablet' | 'phone';
 
@@ -264,17 +265,14 @@ export default function PreviewPanel({ files, isGenerating, fallbackHtml, projec
   }
 
   if (useWC && !['idle', 'error'].includes(wcState.status)) {
+    const caption =
+      wcState.status === 'booting' ? 'Booting environment…' :
+      wcState.status === 'mounting' ? 'Mounting files…' :
+      wcState.status === 'installing' ? 'Installing dependencies…' :
+      'Starting dev server…';
     return (
       <div className="h-full flex flex-col items-center justify-center bg-white dark:bg-[#0A0A0A] gap-4">
-        <div className="flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-brand-orange animate-pulse" />
-          <span className="text-sm text-ink-secondary dark:text-[#A0A0A0]">
-            {wcState.status === 'booting' ? 'Booting environment...' :
-             wcState.status === 'mounting' ? 'Mounting files...' :
-             wcState.status === 'installing' ? 'Installing dependencies...' :
-             'Starting dev server...'}
-          </span>
-        </div>
+        <Mr8LogoLoader size="md" caption={caption} />
         <div className="w-24 h-0.5 bg-edge dark:bg-[#222] rounded-full overflow-hidden">
           <div className="h-full w-8 bg-ink-tertiary dark:bg-[#666] rounded-full animate-progress-sweep" />
         </div>
@@ -302,9 +300,8 @@ export default function PreviewPanel({ files, isGenerating, fallbackHtml, projec
 
   if (isGenerating) {
     return (
-      <div className="h-full flex flex-col items-center justify-center bg-white dark:bg-[#0A0A0A] gap-4">
-        <span className="w-2 h-2 rounded-full bg-brand-orange animate-pulse" />
-        <span className="text-sm text-ink-secondary dark:text-[#A0A0A0]">Building...</span>
+      <div className="h-full flex flex-col items-center justify-center bg-white dark:bg-[#0A0A0A]">
+        <Mr8LogoLoader size="md" caption="Building your project…" />
       </div>
     );
   }

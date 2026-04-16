@@ -40,6 +40,23 @@
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* Mr8LogoLoader — the branded "Mr8 is working" loading signature.
+   Used across every product module for visual coherence. */
+@keyframes mr8-logo-pulse-keyframes {
+  0%, 100% { opacity: 0.7; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.08); }
+}
+.mr8-logo-pulse {
+  animation: mr8-logo-pulse-keyframes 1.6s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mr8-logo-pulse {
+    animation: none;
+    opacity: 0.85;
+  }
+}
+
 @layer components {
   .section-label {
     @apply text-[11px] font-medium uppercase tracking-wider px-3 py-2;

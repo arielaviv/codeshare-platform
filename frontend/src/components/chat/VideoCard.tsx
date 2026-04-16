@@ -4,6 +4,7 @@
  */
 import { useState } from 'react';
 import { getStaticBase } from '../../lib/apiBase';
+import Mr8LogoLoader from '../shared/Mr8LogoLoader';
 
 interface Props {
   videoUrl?: string; // undefined while generating
@@ -62,12 +63,10 @@ export default function VideoCard({
           </div>
         ) : (
           <div className="flex flex-col items-center gap-3 text-white/80">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="animate-spin text-brand-orange">
-              <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-            </svg>
-            <div className="text-sm">
-              {status === 'queued' ? 'Queued at Runway…' : 'Rendering your video…'}
-            </div>
+            <Mr8LogoLoader
+              size="md"
+              caption={status === 'queued' ? 'Queued at Runway…' : 'Rendering your video…'}
+            />
             {typeof progressPercent === 'number' && progressPercent > 0 && (
               <div className="w-48 h-1 rounded-full bg-white/15 overflow-hidden">
                 <div
