@@ -37,8 +37,11 @@ coverage/
 *.tsbuildinfo
 
 # Project notes
+CLAUDE.md
 claude.md
 .claude/
+tasks/
+**/lessons.md
 backend/uploads/*.png
 backend/uploads/*.jpg
 *.env
