@@ -19,14 +19,14 @@ export interface ComputerAgentOptions {
   config?: E2BClientConfig;
 }
 
-const ALLOWED_MODELS = ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'] as const;
+const ALLOWED_MODELS = ['claude-opus-4-7', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'] as const;
 type AllowedModel = (typeof ALLOWED_MODELS)[number];
 
 function pickModel(requested?: string): AllowedModel {
   if (requested && (ALLOWED_MODELS as readonly string[]).includes(requested)) {
     return requested as AllowedModel;
   }
-  return 'claude-opus-4-6';
+  return 'claude-opus-4-7';
 }
 
 function buildSystemPrompt(): string {

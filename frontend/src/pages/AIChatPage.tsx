@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import confetti from 'canvas-confetti';
 import api, { intentAPI } from '../services/api';
+import { shareArtifact, artifactLabel, type ShareableArtifact } from '../services/shareArtifact';
 import { sessionsApi, type SessionSkill } from '../services/sessionsApi';
 import { computeApi } from '../services/computeApi';
 import { appChatApi } from '../services/appChatApi';
@@ -35,6 +36,7 @@ import GoalCard, { type GoalAction } from '../components/chat/GoalCard';
 import TaskCompletedCard from '../components/chat/TaskCompletedCard';
 import FollowUpsCard, { type FollowUpSuggestion } from '../components/chat/FollowUpsCard';
 import SpreadsheetViewer, { type SheetData } from '../components/spreadsheet/SpreadsheetViewer';
+import type { SheetTheme } from '../services/spreadsheetStream';
 import { streamSpreadsheetGeneration } from '../services/spreadsheetStream';
 import SlidePreviewCard from '../components/chat/SlidePreviewCard';
 import ResearchBriefCard from '../components/chat/ResearchBriefCard';
@@ -59,6 +61,7 @@ import { SAMPLE_PROMPTS } from '../data/sample-prompts';
 import type { ForceMode } from '../types/modes';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { wcManager } from '../lib/webcontainer-manager';
+import { stripAnsi, isSpinnerLine } from '../utils/stripAnsi';
 import { getStaticBase } from '../lib/apiBase';
 import { useComputerModal } from '../contexts/ComputerModalContext';
 import SettingsModal from '../components/SettingsModal';
@@ -465,12 +468,25 @@ export default function AIChatPage() {
   const [activeBookId, setActiveBookId] = useState<string | null>(null);
   const [bookLiveMode, setBookLiveMode] = useState(false);
   const [bookRefreshTick, setBookRefreshTick] = useState(0);
+  /** Populated by BookStudioPanel.onBookReady when the Bundler finishes.
+   *  Gates the unified top-toolbar Share button for book artifacts. */
+  const [readyBook, setReadyBook] = useState<{
+    bookId: string;
+    title: string;
+    author?: string;
+    coverImageUrl?: string;
+    bundleUrl: string;
+    bundleSizeBytes: number;
+    wordCount?: number;
+  } | null>(null);
   const liveReaderRef = useRef<LiveReaderHandle>(null);
   const refreshStudioBook = useCallback(() => setBookRefreshTick((t) => t + 1), []);
   // Active spreadsheet artifact (Phase 4G). Streams in row-by-row.
   const [activeSheets, setActiveSheets] = useState<SheetData[]>([]);
   const [activeSheetTitle, setActiveSheetTitle] = useState<string>('');
   const [sheetStreaming, setSheetStreaming] = useState(false);
+  const [activeSheetTheme, setActiveSheetTheme] = useState<SheetTheme | undefined>(undefined);
+  const [activeSheetXlsxUrl, setActiveSheetXlsxUrl] = useState<string | undefined>(undefined);
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [_activeSpreadsheetId, setActiveSpreadsheetId] = useState<string | null>(null);
   // The artifact panel (right side) is auto-revealed on first artifact event
@@ -487,7 +503,7 @@ export default function AIChatPage() {
   const [vizPreferredCharts, setVizPreferredCharts] = useState<ChartKind[]>([]);
   const [prize, setPrize] = useState<PrizeAward | null>(null);
   const [activePlan, setActivePlan] = useState<PlanProposedEvent | null>(null);
-  const { refreshUser } = useAuth();
+  const { refreshUser, user } = useAuth();
   const computerCtx = useComputer();
   const computerModal = useComputerModal();
   const { start: startComputer } = useComputerStream();
@@ -546,7 +562,9 @@ export default function AIChatPage() {
       if (installStarted && state.installLogs.length > installSent) {
         const chunk = state.installLogs.slice(installSent);
         installSent = state.installLogs.length;
-        const lines = chunk.split(/\r?\n/).filter((l) => l.length > 0);
+        const lines = stripAnsi(chunk)
+          .split(/\r?\n/)
+          .filter((l) => l.length > 0 && !isSpinnerLine(l));
         if (lines.length > 0) {
           computerCtx.dispatch({ type: 'terminal-log', id: INSTALL_ID, lines });
         }
@@ -571,7 +589,9 @@ export default function AIChatPage() {
       if (devStarted && state.devLogs.length > devSent) {
         const chunk = state.devLogs.slice(devSent);
         devSent = state.devLogs.length;
-        const lines = chunk.split(/\r?\n/).filter((l) => l.length > 0);
+        const lines = stripAnsi(chunk)
+          .split(/\r?\n/)
+          .filter((l) => l.length > 0 && !isSpinnerLine(l));
         if (lines.length > 0) {
           computerCtx.dispatch({ type: 'terminal-log', id: DEV_ID, lines });
         }
@@ -676,7 +696,16 @@ export default function AIChatPage() {
   }, [serverSessionId]);
 
   const runCodeFlow = useCallback(
-    (trimmed: string, opts?: { skipUserMessage?: boolean; displayTitle?: string }) => {
+    (
+      trimmed: string,
+      opts?: {
+        skipUserMessage?: boolean;
+        displayTitle?: string;
+        intent?: string;
+        needsResearch?: boolean;
+        researchQuery?: string;
+      },
+    ) => {
       if (!projectName) setProjectName(trimmed.slice(0, 50));
 
       const taskListId = `tasks-${Date.now()}`;
@@ -1234,7 +1263,11 @@ export default function AIChatPage() {
           ];
         });
       },
-    }, selectedModel);
+    }, selectedModel, {
+      ...(opts?.intent ? { intent: opts.intent } : {}),
+      ...(opts?.needsResearch ? { needsResearch: true } : {}),
+      ...(opts?.researchQuery ? { researchQuery: opts.researchQuery } : {}),
+    });
   }, [loading, messages, workspace, projectName, selectedModel]);
 
   /**
@@ -1286,7 +1319,7 @@ export default function AIChatPage() {
     };
 
     abortRef.current = streamVisualization(
-      { prompt: trimmed, preferredCharts: vizPreferredCharts, sessionId: serverSessionId ?? undefined },
+      { prompt: trimmed, preferredCharts: vizPreferredCharts, sessionId: serverSessionId ?? undefined, model: selectedModel },
       {
         onStarted() { /* already pushed */ },
         onPythonDrafted(d) {
@@ -1302,7 +1335,7 @@ export default function AIChatPage() {
         },
       }
     );
-  }, [vizOutputFormat, vizPreferredCharts, serverSessionId]);
+  }, [vizOutputFormat, vizPreferredCharts, serverSessionId, selectedModel]);
 
   /**
    * Video mode (9F) — Runway Gen-3 Turbo via /api/ai/generate-video.
@@ -1336,7 +1369,7 @@ export default function AIChatPage() {
     };
 
     abortRef.current = streamVideoGeneration(
-      { prompt: trimmed, durationSec: 5, sessionId: serverSessionId ?? undefined },
+      { prompt: trimmed, durationSec: 5, sessionId: serverSessionId ?? undefined, model: selectedModel },
       {
         onStarted() { /* already pushed */ },
         onPromptRefined(d) {
@@ -1362,7 +1395,7 @@ export default function AIChatPage() {
         },
       }
     );
-  }, [serverSessionId]);
+  }, [serverSessionId, selectedModel]);
 
   /**
    * Audio mode (9E) — ElevenLabs TTS via /api/ai/generate-audio.
@@ -1406,7 +1439,7 @@ export default function AIChatPage() {
     };
 
     abortRef.current = streamAudioGeneration(
-      { prompt: trimmed, sessionId: serverSessionId ?? undefined },
+      { prompt: trimmed, sessionId: serverSessionId ?? undefined, model: selectedModel },
       {
         onStarted() { /* already pushed */ },
         onKind({ kind }) {
@@ -1478,7 +1511,7 @@ export default function AIChatPage() {
         },
       }
     );
-  }, [serverSessionId]);
+  }, [serverSessionId, selectedModel]);
 
   /**
    * Mr8 Book (Slice 1 — outline only). Calls /api/ai/generate-book SSE;
@@ -1531,7 +1564,7 @@ export default function AIChatPage() {
     const editorEntryId = `book-editor-${Date.now()}`;
 
     abortRef.current = streamBookGeneration(
-      { prompt: trimmed, targetWords: 2000, sessionId: serverSessionId ?? undefined },
+      { prompt: trimmed, targetWords: 2000, sessionId: serverSessionId ?? undefined, model: selectedModel },
       {
         onStarted() { /* already pushed */ },
         onSandboxReady({ sandboxId }) {
@@ -1619,7 +1652,7 @@ export default function AIChatPage() {
         },
       }
     );
-  }, [serverSessionId, computerCtx]);
+  }, [serverSessionId, computerCtx, selectedModel]);
 
   /**
    * Book Planner meta-step (Slice 4a). Runs a cheap Haiku classification to
@@ -2349,6 +2382,7 @@ export default function AIChatPage() {
 
     try {
       const brief = await requestResearch(trimmed, {
+        model: selectedModel,
         onProgress: (msg) => {
           setMessages((prev) =>
             prev.map((m) =>
@@ -2406,7 +2440,7 @@ export default function AIChatPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedModel]);
 
   /**
    * Chat mode (9G) — Q&A without tools. Reuses the agent stream but with
@@ -2470,8 +2504,8 @@ export default function AIChatPage() {
   const acceptPlanAndBuild = useCallback(
     (mode: PermissionMode, clearContext: boolean) => {
       if (!activePlan) return;
-      const { planId, pricing } = activePlan;
-      const acceptanceText = `Accept the plan. id=${planId} dealerCents=${pricing.dealerCents} mode=${mode} clearContext=${clearContext}`;
+      const { planId } = activePlan;
+      const acceptanceText = `Accept the plan. id=${planId} mode=${mode} clearContext=${clearContext}`;
       setActivePlan(null);
       // Mark the inline plan-approval card as accepted so it visually
       // collapses (no longer interactive) while the build runs.
@@ -2492,11 +2526,6 @@ export default function AIChatPage() {
   // Accept & Merge UX removed — acceptPlanAndBuild is the commit point,
   // wallet debit fires at plan acceptance instead. Delivery verification
   // still runs via verify_build but no longer gates a payment step.
-
-  const onSpinForDiscount = useCallback(() => {
-    // W3 prize orchestrator will handle this. For now, just log.
-    console.info('[plan-spine] spin-for-discount requested — awaiting W3 orchestrator');
-  }, []);
 
   const onTellMr8 = useCallback(() => {
     setActivePlan(null);
@@ -2704,6 +2733,7 @@ export default function AIChatPage() {
         topic: trimmed,
         slideCount,
         style: 'professional',
+        model: selectedModel,
         ...(brief ? { researchBrief: brief } : {}),
       },
       {
@@ -2841,7 +2871,7 @@ export default function AIChatPage() {
         },
       }
     );
-  }, [navigate, refreshUser]);
+  }, [navigate, refreshUser, selectedModel]);
 
   /**
    * Spreadsheet skill flow. Streams sheets row-by-row into the artifact
@@ -2852,6 +2882,8 @@ export default function AIChatPage() {
     setLoading(true);
     setActiveSheets([]);
     setActiveSheetTitle('');
+    setActiveSheetTheme(undefined);
+    setActiveSheetXlsxUrl(undefined);
     setSheetStreaming(true);
     setPanelDismissed(false);
     setRightTab('sheet');
@@ -2892,38 +2924,81 @@ export default function AIChatPage() {
     };
 
     abortRef.current = streamSpreadsheetGeneration(
-      { topic: trimmed, sessionId: serverSessionId ?? undefined },
+      { topic: trimmed, sessionId: serverSessionId ?? undefined, model: selectedModel },
       {
         onStarted() {
           // nothing extra
+        },
+        onTheme({ theme }) {
+          setActiveSheetTheme(theme);
         },
         onSheetMeta(meta) {
           if (meta.index === 0) setTask('task-gen', 'done');
           setTask('task-rows', 'running');
           setActiveSheets((prev) => {
             const next = [...prev];
-            next[meta.index] = { name: meta.name, rows: [] };
+            next[meta.index] = {
+              name: meta.name,
+              cells: [],
+              rows: [],
+              frozenRows: meta.frozenRows,
+              frozenCols: meta.frozenCols,
+              theme: meta.theme,
+            };
             return next;
           });
+          if (meta.theme) setActiveSheetTheme(meta.theme);
         },
         onSheetRow(row) {
           setActiveSheets((prev) => {
             const next = prev.slice();
-            const sheet = next[row.sheetIndex] ?? { name: `Sheet ${row.sheetIndex + 1}`, rows: [] };
-            const rows = sheet.rows.slice();
-            rows[row.rowIndex] = row.cells;
-            next[row.sheetIndex] = { ...sheet, rows };
+            const sheet = next[row.sheetIndex] ?? { name: `Sheet ${row.sheetIndex + 1}`, cells: [], rows: [] };
+            const cells = (sheet.cells ?? []).slice();
+            const legacyRows = (sheet.rows ?? []).slice();
+            if (row.richCells) {
+              cells[row.rowIndex] = row.richCells;
+            }
+            legacyRows[row.rowIndex] = row.cells;
+            next[row.sheetIndex] = { ...sheet, cells, rows: legacyRows };
             return next;
           });
         },
         onCompleted(done) {
           setActiveSheetTitle(done.title);
           setActiveSpreadsheetId(done.sheetId);
+          if (done.theme) setActiveSheetTheme(done.theme);
+          if (done.xlsxUrl) setActiveSheetXlsxUrl(done.xlsxUrl);
           setSheetStreaming(false);
           setTask('task-rows', 'done');
           setTask('task-save', 'done');
           setOverall('done');
           setLoading(false);
+        },
+        onPythonStart(event) {
+          computerCtx.dispatch({
+            type: 'python-start',
+            id: event.executionId,
+            code: event.code,
+            description: event.description,
+          });
+          computerCtx.setMode('compact');
+          setPanelDismissed(false);
+        },
+        onPythonResult(event) {
+          computerCtx.dispatch({
+            type: 'python-result',
+            id: event.executionId,
+            status: event.status,
+            stdout: event.stdout,
+            stderr: event.stderr,
+            error: event.error,
+            results: event.results,
+            outputFiles: event.outputFiles,
+            durationMs: event.durationMs,
+          });
+        },
+        onXlsxReady(event) {
+          setActiveSheetXlsxUrl(event.xlsxUrl);
         },
         onError(msg) {
           setSheetStreaming(false);
@@ -2937,7 +3012,7 @@ export default function AIChatPage() {
         },
       }
     );
-  }, [serverSessionId]);
+  }, [serverSessionId, selectedModel, computerCtx]);
 
   const sendMessage = useCallback(async (text: string) => {
     const trimmed = text.trim();
@@ -3060,13 +3135,19 @@ export default function AIChatPage() {
           return;
         }
         if (result.intent === 'deck' && result.confidence > 0.7) {
-          // Always go straight to the inline deck flow — no confirmation dialog,
-          // no wizard. Mr8 just gets to work.
           await runDeckFlow(trimmed, result.researchQuery ?? trimmed);
           return;
         }
         if (result.intent === 'book' && result.confidence > 0.6) {
           await runBookPlanner(trimmed);
+          return;
+        }
+        if (result.intent === 'code-app' && result.needsResearch && result.researchQuery) {
+          runCodeFlow(trimmed, {
+            intent: 'code-app',
+            needsResearch: true,
+            researchQuery: result.researchQuery,
+          });
           return;
         }
       } catch {
@@ -3152,19 +3233,123 @@ export default function AIChatPage() {
     });
   }, [workspace, projectName]);
 
+  /** Most-recent completed artifact from the transcript; falls back to
+   *  active Book Studio bundle, Spreadsheet viewer, or WebContainer workspace.
+   *  Drives the single top-toolbar Share button for every product module. */
+  const shareable = useMemo<ShareableArtifact | null>(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (m.kind === 'video-card' && m.status === 'succeeded' && m.videoUrl) {
+        return {
+          kind: 'video',
+          videoUrl: m.videoUrl,
+          durationSec: m.durationSec,
+          refinedPrompt: m.refinedPrompt,
+          title: m.title,
+        };
+      }
+      if (m.kind === 'audio-ready') {
+        return {
+          kind: 'audio',
+          audioUrl: m.audioUrl,
+          durationSec: m.durationSec,
+          voiceName: m.voiceName,
+          scriptText: m.scriptText,
+          title: m.title,
+          audioKind: m.audioKind,
+        };
+      }
+      if (m.kind === 'viz-card' && m.status === 'done' && m.imageUrl) {
+        return {
+          kind: 'visualization',
+          imageUrl: m.imageUrl,
+          chartKind: m.chartKind,
+          code: m.code,
+          title: m.title,
+        };
+      }
+      if (m.kind === 'generated-image') {
+        return {
+          kind: 'image',
+          imageUrl: m.imageUrl,
+          prompt: m.prompt,
+          width: m.width,
+          height: m.height,
+        };
+      }
+      if (m.kind === 'research-brief') {
+        return { kind: 'research', brief: m.brief };
+      }
+      if (m.kind === 'slide-preview') {
+        return {
+          kind: 'deck',
+          deckId: m.deckId,
+          title: m.title,
+          slideCount: m.totalSlides,
+          firstSlide: {
+            title: m.title,
+            subtitle: m.subtitle,
+            bulletCount: m.bulletCount,
+            slideType: m.slideType,
+          },
+        };
+      }
+    }
+    if (readyBook) {
+      return { kind: 'book', ...readyBook };
+    }
+    if (activeSheets.length > 0) {
+      return {
+        kind: 'spreadsheet',
+        title: activeSheetTitle || 'Spreadsheet',
+        xlsxUrl: activeSheetXlsxUrl,
+        sheetsMeta: activeSheets.map((s) => {
+          const rows = s.rows?.length ?? s.cells?.length ?? 0;
+          const cols = s.rows?.[0]?.length ?? s.cells?.[0]?.length ?? 0;
+          return { name: s.name, rows, cols };
+        }),
+      };
+    }
+    if (workspace.files.size > 0) {
+      return {
+        kind: 'code-app',
+        projectName: projectName || 'Generated App',
+        files: workspace.toRecord(),
+      };
+    }
+    return null;
+    // `workspace` is rebuilt each render by useWorkspace(); depend on its
+    // stable slices (`files` state, `toRecord` callback) so this memo only
+    // recomputes when the project actually changes — not every SSE token.
+  }, [messages, readyBook, activeSheets, activeSheetTitle, activeSheetXlsxUrl, workspace.files, workspace.toRecord, projectName]);
+
+  const [isSharing, setIsSharing] = useState(false);
+  const [shareToast, setShareToast] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  useEffect(() => {
+    if (!shareToast) return;
+    const t = setTimeout(() => setShareToast(null), 3500);
+    return () => clearTimeout(t);
+  }, [shareToast]);
+
   const handleShare = useCallback(async () => {
-    if (workspace.files.size === 0) return;
-    const mainFile = workspace.files.get('src/App.tsx') || workspace.files.get('index.html') || Array.from(workspace.files.values())[0] || 'No code';
-    const lang = workspace.files.has('src/App.tsx') ? 'typescript' : 'html';
-    const formData = new FormData();
-    formData.append('title', projectName || 'Generated App');
-    formData.append('code', mainFile.slice(0, 10000));
-    formData.append('language', lang);
-    formData.append('description', 'Built with Mr8 AI');
-    formData.append('files', JSON.stringify(workspace.toRecord()));
-    await api.post('/posts', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
-    navigate('/feed');
-  }, [workspace, projectName, navigate]);
+    if (!shareable || isSharing) return;
+    if (!user) {
+      setShareToast({ kind: 'err', text: 'Sign in to share to the feed.' });
+      return;
+    }
+    setIsSharing(true);
+    try {
+      await shareArtifact(shareable);
+      setShareToast({ kind: 'ok', text: `Shared ${artifactLabel(shareable)} to the feed.` });
+      setTimeout(() => navigate('/feed'), 600);
+    } catch (err) {
+      const msg =
+        err instanceof Error ? err.message : 'Could not share. Please try again.';
+      setShareToast({ kind: 'err', text: msg });
+    } finally {
+      setIsSharing(false);
+    }
+  }, [shareable, isSharing, user, navigate]);
 
   // Media-kind entries (generated images) live inline + in the modal —
   // they should NOT auto-open the right artifact panel (which would just
@@ -3234,30 +3419,67 @@ export default function AIChatPage() {
             </button>
           </Tooltip>
           {workspace.files.size > 0 && (
-            <>
-              <button
-                onClick={handleDownload}
-                className="px-3 py-1.5 text-xs text-ink-secondary dark:text-[#A0A0A0] border border-edge dark:border-[#333] rounded-md hover:text-ink dark:hover:text-[#E8E8E8] hover:border-ink-tertiary dark:hover:border-[#555] transition-colors flex items-center gap-1.5"
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                  <polyline points="7 10 12 15 17 10" />
-                  <line x1="12" y1="15" x2="12" y2="3" />
-                </svg>
-                Download
-              </button>
+            <button
+              onClick={handleDownload}
+              className="px-3 py-1.5 text-xs text-ink-secondary dark:text-[#A0A0A0] border border-edge dark:border-[#333] rounded-md hover:text-ink dark:hover:text-[#E8E8E8] hover:border-ink-tertiary dark:hover:border-[#555] transition-colors flex items-center gap-1.5"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+              Download
+            </button>
+          )}
+          {shareable && (
+            <Tooltip
+              content={
+                !user
+                  ? 'Sign in to share to the feed'
+                  : `Share ${artifactLabel(shareable)} to the feed`
+              }
+              side="bottom"
+            >
               <button
                 onClick={handleShare}
-                className="px-3 py-1.5 text-xs text-white bg-brand-orange hover:bg-brand-orange-hover rounded-md transition-colors font-medium"
+                disabled={isSharing || !user}
+                aria-busy={isSharing}
+                className="px-3 py-1.5 text-xs text-white bg-brand-orange hover:bg-brand-orange-hover rounded-md transition-colors font-medium flex items-center gap-1.5 disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                Share
+                {isSharing ? (
+                  <svg className="animate-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                    <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                  </svg>
+                ) : (
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <circle cx="18" cy="5" r="3" />
+                    <circle cx="6" cy="12" r="3" />
+                    <circle cx="18" cy="19" r="3" />
+                    <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+                    <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+                  </svg>
+                )}
+                {isSharing ? 'Sharing…' : 'Share'}
               </button>
-            </>
+            </Tooltip>
           )}
         </div>
       </div>
 
       <div className="flex-1 flex overflow-hidden relative">
+        {shareToast && (
+          <div
+            role="status"
+            aria-live="polite"
+            className={`absolute top-3 left-1/2 -translate-x-1/2 z-40 px-3 py-2 text-xs rounded-md shadow-lg border ${
+              shareToast.kind === 'ok'
+                ? 'bg-brand-orange text-white border-brand-orange'
+                : 'bg-white dark:bg-[#141414] text-status-error border-status-error/40'
+            }`}
+          >
+            {shareToast.text}
+          </div>
+        )}
         {chatHidden && (
           <div className="absolute top-4 left-4 z-30">
             <Tooltip content="Show chat panel" side="right">
@@ -3457,10 +3679,8 @@ export default function AIChatPage() {
                       <div key={msg.id} className="animate-fade-slide-up">
                         <PlanApprovalWidget
                           plan={msg.planEvent.plan}
-                          pricing={msg.planEvent.pricing}
                           accepted={msg.status === 'accepted'}
                           onAcceptBuild={msg.status === 'pending' ? acceptPlanAndBuild : () => {}}
-                          onSpinForDiscount={msg.status === 'pending' ? onSpinForDiscount : () => {}}
                           onTellMr8={msg.status === 'pending' ? onTellMr8 : () => {}}
                         />
                       </div>
@@ -3922,9 +4142,9 @@ export default function AIChatPage() {
                     onChange={(e) => setSelectedModel(e.target.value)}
                     className="text-[11px] bg-surface-secondary dark:bg-[#141414] border border-edge dark:border-[#2A2A2A] text-ink-secondary dark:text-[#888] rounded px-2 py-1 focus:outline-none focus:border-ink-tertiary dark:focus:border-[#444] cursor-pointer"
                   >
-                    <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
-                    <option value="claude-sonnet-4-6">Sonnet 4.6</option>
-                    <option value="claude-opus-4-6">Opus 4.6</option>
+                    <option value="claude-haiku-4-5-20251001">Mr8 Fast</option>
+                    <option value="claude-sonnet-4-6">Mr8 Pro</option>
+                    <option value="claude-opus-4-7">Mr8 Apex</option>
                   </select>
                   <select
                     value={forceMode}
@@ -4029,6 +4249,8 @@ export default function AIChatPage() {
               <SpreadsheetViewer
                 sheets={activeSheets}
                 title={activeSheetTitle}
+                theme={activeSheetTheme}
+                xlsxUrl={activeSheetXlsxUrl}
                 streaming={sheetStreaming}
               />
             ) : rightTab === 'book' && activeBookId ? (
@@ -4037,6 +4259,7 @@ export default function AIChatPage() {
                 liveMode={bookLiveMode}
                 liveReaderRef={liveReaderRef}
                 refreshTick={bookRefreshTick}
+                onBookReady={setReadyBook}
               />
             ) : (
               <PreviewPanel
@@ -4056,6 +4279,29 @@ export default function AIChatPage() {
                     'Find the matching component in src/ and patch it via write_file so the edits survive a refresh. Then call verify_build.',
                   ].join('\n');
                   runCodeFlow(prompt, { skipUserMessage: true, displayTitle: 'Save live edits to source' });
+                }}
+                onFixError={(err) => {
+                  const location = err.file
+                    ? `${err.file}${err.line ? `:${err.line}` : ''}`
+                    : 'unknown location';
+                  const stackHead = err.stack
+                    ? err.stack.split('\n').slice(0, 8).join('\n')
+                    : '';
+                  const prompt = [
+                    'The preview is broken. Fix this error so the app renders.',
+                    `Location: ${location}`,
+                    '',
+                    'Error:',
+                    err.message,
+                    stackHead ? '' : '',
+                    stackHead ? 'Stack:' : '',
+                    stackHead,
+                    '',
+                    'Inspect the relevant file in the workspace, patch it via write_file, then call verify_build.',
+                  ]
+                    .filter((l) => l !== undefined)
+                    .join('\n');
+                  runCodeFlow(prompt, { displayTitle: 'Fix preview error' });
                 }}
               />
             )}

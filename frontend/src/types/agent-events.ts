@@ -68,7 +68,7 @@ export interface DoneEvent {
 export interface PlanProposedEvent {
   planId: string;
   plan: BlueprintSpec;
-  pricing: PricingEstimate;
+  pricing?: PricingEstimate;
 }
 
 export interface PlanAcceptedEvent {

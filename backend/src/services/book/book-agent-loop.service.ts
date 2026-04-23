@@ -21,6 +21,7 @@ import {
   type BookAgentWriter,
 } from './chapter-dispatcher';
 import { maybeInitChapters, resetChapterForRegenerate } from './chapter-init';
+import { resolveUserModel } from '../model-select';
 
 /**
  * Book agent loop — the tool-looped drafter that runs inside the shared E2B
@@ -50,9 +51,9 @@ export interface DraftBookOptions {
   /** User-authored note, appended to the system prompt. */
   directive?: string;
   sessionId?: string;
+  model?: string;
 }
 
-const MODEL = 'claude-sonnet-4-6';
 const MAX_ITERATIONS = 40;
 const MAX_TOKENS_PER_TURN = 8192;
 
@@ -119,6 +120,7 @@ export async function runBookAgent(
   const client = new Anthropic({ apiKey });
   const tools = bookAgentToolDefinitions();
   const systemPrompt = buildSystemPrompt(book, opts);
+  const draftModel = resolveUserModel(opts.model);
 
   const initialMessage = buildInitialUserMessage(book, opts);
   const apiMessages: MessageParam[] = [
@@ -142,7 +144,7 @@ export async function runBookAgent(
 
       // --- Turn: stream Anthropic response -----------------------------------
       const stream = client.messages.stream({
-        model: MODEL,
+        model: draftModel,
         max_tokens: MAX_TOKENS_PER_TURN,
         system: systemPrompt,
         tools,
@@ -244,7 +246,7 @@ export async function runBookAgent(
         userId: opts.userId,
         sessionId: opts.sessionId ? new mongoose.Types.ObjectId(opts.sessionId) : undefined,
         feature: 'book-draft-chapter',
-        modelName: MODEL,
+        modelName: draftModel,
         inputTokens: totalInputTokens,
         outputTokens: totalOutputTokens,
       });

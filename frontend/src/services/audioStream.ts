@@ -31,6 +31,7 @@ export function streamAudioGeneration(
     kind?: AudioKind;
     sfxDurationSec?: number;
     musicLengthMs?: number;
+    model?: string;
   },
   handlers: AudioStreamHandlers
 ): AbortController {

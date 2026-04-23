@@ -6,6 +6,7 @@ import { UsageEvent } from '../models/UsageEvent';
 import { checkAndAwardMilestone } from './milestone.service';
 import type { ResearchBrief } from './research/research-brief.types';
 import { craftBibleFor } from './writing/craft-bible';
+import { resolveUserModel } from './model-select';
 
 export interface SlideAgentSSEWriter {
   send(event: string, data: unknown): void;
@@ -19,9 +20,8 @@ export interface GenerateDeckOptions {
   templateId?: string;
   userId: mongoose.Types.ObjectId;
   researchBrief?: ResearchBrief;
+  model?: string;
 }
-
-const DECK_MODEL = 'claude-sonnet-4-6';
 
 const createDeckTool: Tool = {
   name: 'create_deck',
@@ -298,10 +298,11 @@ export async function generateDeck(
   });
 
   const client = new Anthropic({ apiKey });
+  const model = resolveUserModel(opts.model);
 
   try {
     const response = await client.messages.create({
-      model: DECK_MODEL,
+      model,
       max_tokens: 8192,
       system: buildSystemPrompt(opts),
       tools: [createDeckTool],
@@ -343,7 +344,7 @@ export async function generateDeck(
     await UsageEvent.create({
       userId: opts.userId,
       feature: 'deck-generation',
-      modelName: DECK_MODEL,
+      modelName: model,
       inputTokens: usage?.input_tokens ?? 0,
       outputTokens: usage?.output_tokens ?? 0,
     });

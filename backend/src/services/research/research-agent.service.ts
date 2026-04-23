@@ -9,6 +9,7 @@ import type { ComputerSSEWriter } from '../computer/sse-writer';
 import type { E2BClientConfig } from '../computer/e2b-client';
 import type { ResearchBrief, ResearchSource } from './research-brief.types';
 import { craftBibleFor } from '../writing/craft-bible';
+import { resolveUserModel } from '../model-select';
 
 const MAX_ACTIONS = 12;
 const MAX_DURATION_MS = 90_000;
@@ -81,6 +82,7 @@ export interface ResearchContext {
   sse: ComputerSSEWriter;
   apiKey: string;
   config?: E2BClientConfig;
+  model?: string;
 }
 
 interface BriefInput {
@@ -104,6 +106,7 @@ export async function runResearchAgent(
   ctx: ResearchContext
 ): Promise<ResearchBrief> {
   const client = new Anthropic({ apiKey: ctx.apiKey });
+  const researchModel = resolveUserModel(ctx.model, 'claude-opus-4-7');
   const start = Date.now();
   let browserActions = 0;
   let cappedAt: 'actions' | 'time' | undefined;
@@ -125,7 +128,7 @@ export async function runResearchAgent(
     }
 
     const response = await client.messages.create({
-      model: 'claude-opus-4-6',
+      model: researchModel,
       max_tokens: 8192,
       system: RESEARCH_SYSTEM_PROMPT,
       tools: [browserTool, briefTool],

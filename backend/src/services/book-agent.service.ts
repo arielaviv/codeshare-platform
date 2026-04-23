@@ -8,6 +8,7 @@ import { getSession, upsertSession } from './computer/e2b-session-store';
 import { craftBibleFor } from './writing/craft-bible';
 import { pickThemeForOutline } from './book/themes';
 import { maybeInitChapters } from './book/chapter-init';
+import { resolveUserModel } from './model-select';
 
 export interface BookAgentSSEWriter {
   send(event: string, data: unknown): void;
@@ -19,9 +20,9 @@ export interface GenerateBookOptions {
   targetWords?: number;
   sessionId?: string;
   userId: mongoose.Types.ObjectId;
+  model?: string;
 }
 
-const BOOK_MODEL = 'claude-sonnet-4-6';
 const DEFAULT_TARGET_WORDS = 2000;
 const SANDBOX_BOOK_DIR = '/home/user/book';
 
@@ -266,8 +267,9 @@ export async function generateBook(
   let usageOutput = 0;
   try {
     const client = new Anthropic({ apiKey });
+    const bookModel = resolveUserModel(opts.model);
     const response = await client.messages.create({
-      model: BOOK_MODEL,
+      model: bookModel,
       max_tokens: 4096,
       system: buildSystemPrompt(targetWords),
       tools: [writeOutlineTool],
@@ -380,7 +382,7 @@ export async function generateBook(
       userId: opts.userId,
       sessionId: opts.sessionId ? new mongoose.Types.ObjectId(opts.sessionId) : undefined,
       feature: 'book-outline',
-      modelName: BOOK_MODEL,
+      modelName: resolveUserModel(opts.model),
       inputTokens: usageInput,
       outputTokens: usageOutput,
     });

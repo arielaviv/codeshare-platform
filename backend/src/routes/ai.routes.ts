@@ -31,6 +31,7 @@ import { runComputerAgent } from '../services/computer-agent.service';
 import { createComputerSSEWriter } from '../services/computer/sse-writer';
 import type { ComputerSSEWriter } from '../services/computer/sse-writer';
 import { runResearchAgent } from '../services/research/research-agent.service';
+import type { ResearchBrief } from '../services/research/research-brief.types';
 import {
   generateDeckSchema,
   classifyIntentSchema,
@@ -64,6 +65,44 @@ import { UsageEvent } from '../models/UsageEvent';
 import mongoose from 'mongoose';
 
 const router = Router();
+
+/**
+ * Prepend a research brief as a user message so the code-agent (which
+ * has no browser tools) works from fresh facts. Appended AFTER the
+ * original user prompt so the agent reads request → facts → act.
+ */
+function injectResearchBriefMessage(
+  messages: ChatMessage[],
+  brief: ResearchBrief,
+): ChatMessage[] {
+  const sources = brief.sources
+    .slice(0, 8)
+    .map((s, i) => `${i + 1}. ${s.title} — ${s.url}`)
+    .join('\n');
+  const facts = brief.keyFacts.slice(0, 20).map((f) => `- ${f}`).join('\n');
+  const contextBody = [
+    `Research brief for: ${brief.query}`,
+    '',
+    brief.summary,
+    '',
+    'Key facts:',
+    facts || '- (none)',
+    '',
+    'Sources:',
+    sources || '(none)',
+    '',
+    'Use these facts in the build where accuracy matters (specs, numbers, names). Do not invent details the brief does not support.',
+  ].join('\n');
+
+  const briefMessage: ChatMessage = {
+    role: 'user',
+    content: contextBody,
+  };
+
+  const last = messages[messages.length - 1];
+  if (!last) return [briefMessage];
+  return [...messages.slice(0, -1), briefMessage, last];
+}
 
 /**
  * @swagger
@@ -261,9 +300,77 @@ router.post(
         },
       };
 
-      const { model, chatOnly } = req.body as { model?: string; chatOnly?: boolean };
-      await runCodeAgent(messages, workspace || {}, writer, model, req.user!._id, { chatOnly });
+      const {
+        model,
+        chatOnly,
+        intent,
+        needsResearch,
+        researchQuery,
+        researchBrief: providedBrief,
+      } = req.body as {
+        model?: string;
+        chatOnly?: boolean;
+        intent?: string;
+        needsResearch?: boolean;
+        researchQuery?: string;
+        researchBrief?: ResearchBrief;
+      };
+
+      // Manus-style research pre-step. Runs silently before the code-agent
+      // if the intent classifier flagged the topic as needing fresh facts.
+      // Skipped in chat-only mode and for intents that aren't code-app.
+      let researchBrief: ResearchBrief | undefined = providedBrief;
+      const anthropicKey = process.env.ANTHROPIC_API_KEY;
+      const e2bKey = process.env.E2B_API_KEY;
+      const shouldResearch =
+        !chatOnly &&
+        intent === 'code-app' &&
+        needsResearch === true &&
+        !researchBrief &&
+        Boolean(anthropicKey) &&
+        Boolean(e2bKey) &&
+        Boolean(researchQuery && researchQuery.trim().length > 0);
+
+      if (shouldResearch) {
+        writer.send('agent_phase', { phase: 'researching', query: researchQuery });
+        const researchAdapter = {
+          send(event: string, data: unknown) {
+            if (closed) return;
+            res.write(`event: research_${event}\ndata: ${JSON.stringify(data)}\n\n`);
+          },
+          end() {
+            /* don't close — the agent stream continues */
+          },
+        } as unknown as ComputerSSEWriter;
+        try {
+          const brief = await runResearchAgent(researchQuery!, {
+            userId: req.user!._id.toString(),
+            sse: researchAdapter,
+            apiKey: anthropicKey!,
+            model,
+          });
+          researchBrief = brief;
+          writer.send('research_brief_ready', brief);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          writer.send('research_failed', { message });
+          // Keep going — code-agent can still build without research.
+        }
+        writer.send('agent_phase', { phase: 'building' });
+      }
+
+      const agentMessages = researchBrief
+        ? injectResearchBriefMessage(messages, researchBrief)
+        : messages;
+
+      await runCodeAgent(agentMessages, workspace || {}, writer, model, req.user!._id, { chatOnly });
     } catch (error) {
+      const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+      const status = (error as { status?: number })?.status;
+      console.error(
+        `[ai.routes] /agent failed${status ? ` status=${status}` : ''} — ${detail}`,
+        error instanceof Error ? error.stack : undefined,
+      );
       if (!res.headersSent) {
         if (error instanceof ApiError) {
           next(error);
@@ -273,7 +380,12 @@ router.post(
           next(error);
         }
       } else {
-        res.write(`event: error\ndata: ${JSON.stringify({ message: 'Agent failed' })}\n\n`);
+        // Surface a short reason so the UI can show why instead of a bare
+        // "Agent failed" — full detail lives in server logs above.
+        const reason = error instanceof Error ? error.message.slice(0, 200) : 'unknown error';
+        res.write(
+          `event: error\ndata: ${JSON.stringify({ message: 'Agent failed', reason })}\n\n`,
+        );
         res.end();
       }
     }
@@ -384,6 +496,7 @@ router.post(
             userId: req.user!._id.toString(),
             sse: researchAdapter,
             apiKey: anthropicKey!,
+            model: validation.data.model,
           });
           researchBrief = brief;
           writer.send('research_brief_ready', brief);
@@ -400,6 +513,7 @@ router.post(
           ...validation.data,
           researchBrief,
           userId: req.user!._id,
+          model: validation.data.model,
         },
         writer
       );
@@ -604,7 +718,7 @@ router.post(
   researchRateLimiter,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { query } = req.body as { query?: string };
+      const { query, model } = req.body as { query?: string; model?: string };
       if (!query || typeof query !== 'string' || query.trim().length === 0) {
         throw new ApiError('query is required', 400);
       }
@@ -619,7 +733,7 @@ router.post(
 
       const sse = createComputerSSEWriter(res);
       try {
-        const brief = await runResearchAgent(query, { userId, sse, apiKey });
+        const brief = await runResearchAgent(query, { userId, sse, apiKey, model });
         res.write(`event: research_brief\ndata: ${JSON.stringify(brief)}\n\n`);
         sse.send('done', { iterations: 0, durationMs: brief.durationMs });
       } catch (err) {
@@ -723,11 +837,12 @@ router.post(
   aiRateLimiter,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { topic, sheetCount, style, sessionId } = (req.body ?? {}) as {
+      const { topic, sheetCount, style, sessionId, model } = (req.body ?? {}) as {
         topic?: string;
         sheetCount?: number;
         style?: 'simple' | 'detailed';
         sessionId?: string;
+        model?: string;
       };
       if (!topic || topic.trim().length === 0) {
         res.status(400).json({ message: 'topic is required' });
@@ -754,7 +869,7 @@ router.post(
       };
 
       try {
-        await generateSpreadsheet({ topic, sheetCount, style, sessionId }, req.user._id, writer);
+        await generateSpreadsheet({ topic, sheetCount, style, sessionId, model }, req.user._id, writer);
       } catch (innerErr) {
         // Headers already flushed — surface the failure via SSE, never via
         // next(err) which would try to set headers again.
@@ -781,7 +896,7 @@ router.post(
   aiRateLimiter,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { prompt, scriptText, voiceId, sessionId, kind, sfxDurationSec, musicLengthMs } = (req.body ?? {}) as {
+      const { prompt, scriptText, voiceId, sessionId, kind, sfxDurationSec, musicLengthMs, model } = (req.body ?? {}) as {
         prompt?: string;
         scriptText?: string;
         voiceId?: string;
@@ -789,6 +904,7 @@ router.post(
         kind?: 'tts' | 'sfx' | 'music';
         sfxDurationSec?: number;
         musicLengthMs?: number;
+        model?: string;
       };
       if (!prompt || prompt.trim().length === 0) {
         res.status(400).json({ message: 'prompt is required' });
@@ -827,7 +943,7 @@ router.post(
       }
 
       await generateAudio(
-        { prompt, scriptText, voiceId: effectiveVoiceId, sessionId, kind, sfxDurationSec, musicLengthMs },
+        { prompt, scriptText, voiceId: effectiveVoiceId, sessionId, kind, sfxDurationSec, musicLengthMs, model },
         req.user._id,
         writer
       );
@@ -848,10 +964,11 @@ router.post(
   aiRateLimiter,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { prompt, durationSec, sessionId } = (req.body ?? {}) as {
+      const { prompt, durationSec, sessionId, model } = (req.body ?? {}) as {
         prompt?: string;
         durationSec?: 5 | 10;
         sessionId?: string;
+        model?: string;
       };
       if (!prompt || prompt.trim().length === 0) {
         res.status(400).json({ message: 'prompt is required' });
@@ -876,7 +993,7 @@ router.post(
         },
       };
 
-      await generateVideo({ prompt, durationSec, sessionId }, req.user._id, writer);
+      await generateVideo({ prompt, durationSec, sessionId, model }, req.user._id, writer);
     } catch (err) {
       next(err);
     }
@@ -957,6 +1074,7 @@ router.post(
             targetWords: validation.data.targetWords,
             sessionId: validation.data.sessionId,
             userId: req.user._id,
+            model: validation.data.model,
           },
           writer
         );
@@ -1028,6 +1146,7 @@ router.post(
             regenerateIdx: validation.data.regenerateIdx,
             author: validation.data.author,
             sessionId: validation.data.sessionId,
+            model: validation.data.model,
           },
           writer
         );
@@ -1103,6 +1222,7 @@ router.post(
             chapterN: validation.data.chapterN,
             directive: validation.data.directive,
             sessionId: validation.data.sessionId,
+            model: validation.data.model,
           },
           writer
         );
@@ -1231,7 +1351,7 @@ router.post(
 
       try {
         await runContinuityAudit(
-          { bookId: validation.data.bookId, userId: req.user._id, sessionId: validation.data.sessionId },
+          { bookId: validation.data.bookId, userId: req.user._id, sessionId: validation.data.sessionId, model: validation.data.model },
           writer
         );
       } catch (innerErr) {
@@ -1293,6 +1413,7 @@ router.post(
             directives: validation.data.directives,
             chapterN: validation.data.chapterN,
             sessionId: validation.data.sessionId,
+            model: validation.data.model,
           },
           { send: writer.send, end() { /* outer owns */ } }
         );
@@ -1451,10 +1572,11 @@ router.post(
   aiRateLimiter,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { prompt, preferredCharts, sessionId } = (req.body ?? {}) as {
+      const { prompt, preferredCharts, sessionId, model } = (req.body ?? {}) as {
         prompt?: string;
         preferredCharts?: ChartKind[];
         sessionId?: string;
+        model?: string;
       };
       if (!prompt || prompt.trim().length === 0) {
         res.status(400).json({ message: 'prompt is required' });
@@ -1479,7 +1601,7 @@ router.post(
         },
       };
 
-      await generateVisualization({ prompt, preferredCharts, sessionId }, req.user._id, writer);
+      await generateVisualization({ prompt, preferredCharts, sessionId, model }, req.user._id, writer);
     } catch (err) {
       next(err);
     }

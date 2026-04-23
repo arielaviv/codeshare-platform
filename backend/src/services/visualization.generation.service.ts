@@ -6,6 +6,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { handlePythonExec } from './computer/python-handler';
 import { createComputerSSEWriter } from './computer/sse-writer';
 import { UsageEvent } from '../models/UsageEvent';
+import { resolveUserModel } from './model-select';
 
 export interface VisualizationSSEWriter {
   send(event: string, data: unknown): void;
@@ -21,6 +22,7 @@ export interface GenerateVisualizationRequest {
   prompt: string;
   preferredCharts?: ChartKind[];
   sessionId?: string;
+  model?: string;
 }
 
 const SCRIPT_SYSTEM_PROMPT = `You write Python that generates a single
@@ -46,7 +48,8 @@ Hard rules:
 
 async function draftPython(
   prompt: string,
-  preferredCharts: ChartKind[] | undefined
+  preferredCharts: ChartKind[] | undefined,
+  model: string
 ): Promise<string> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' });
   const userMessage = preferredCharts && preferredCharts.length > 0
@@ -54,7 +57,7 @@ async function draftPython(
     : `User prompt: ${prompt}`;
 
   const response = await client.messages.create({
-    model: 'claude-sonnet-4-6',
+    model,
     max_tokens: 2048,
     system: SCRIPT_SYSTEM_PROMPT,
     messages: [{ role: 'user', content: userMessage }],
@@ -81,10 +84,12 @@ export async function generateVisualization(
 ): Promise<void> {
   writer.send('viz_started', { prompt: req.prompt });
 
-  // 1) Have Sonnet draft the Python.
+  const vizModel = resolveUserModel(req.model);
+
+  // 1) Have the picked model draft the Python.
   let code: string;
   try {
-    code = await draftPython(req.prompt, req.preferredCharts);
+    code = await draftPython(req.prompt, req.preferredCharts, vizModel);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     writer.send('error', { message: `Python draft failed: ${msg}` });
@@ -157,7 +162,7 @@ export async function generateVisualization(
       userId,
       sessionId: req.sessionId ? new mongoose.Types.ObjectId(req.sessionId) : undefined,
       feature: 'code-agent',
-      modelName: 'claude-sonnet-4-6+e2b-python',
+      modelName: `${vizModel}+e2b-python`,
       inputTokens: req.prompt.length,
       outputTokens: 0,
       costCents: 19, // Polish tier

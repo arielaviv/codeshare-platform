@@ -1,9 +1,6 @@
 import { useEffect, useRef } from 'react';
 import mr8Logo from '../assets/mr8-logo.png';
-
-function stripAnsi(text: string): string {
-  return text.replace(/\x1B\[[0-9;]*[a-zA-Z]|\[[\d;]*[a-zA-Z]/g, '');
-}
+import { stripAnsi, isSpinnerLine } from '../utils/stripAnsi';
 
 interface TerminalPanelProps {
   logs: string;
@@ -39,7 +36,11 @@ export default function TerminalPanel({ logs }: TerminalPanelProps) {
         {logs ? (
           <>
             <div className="text-brand-green dark:text-[#4ADE80]">~/project</div>
-            {stripAnsi(logs).split('\n').filter(l => l.trim() && !l.match(/^[|/\\-]$/)).map((line, i) => (
+            {stripAnsi(logs).split('\n').filter((l, i, arr) => {
+              if (isSpinnerLine(l)) return false;
+              if (l.trim() === arr[i - 1]?.trim()) return false;
+              return true;
+            }).map((line, i) => (
               <div key={i} className={line.startsWith('>') || line.startsWith('❯') ? 'text-ink dark:text-[#E8E8E8]' : 'text-ink-secondary dark:text-[#A0A0A0]'}>
                 {line}
               </div>

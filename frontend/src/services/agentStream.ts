@@ -9,7 +9,12 @@ export function streamAgent(
   workspace: Record<string, string>,
   handlers: AgentSSEHandlers,
   model?: string,
-  options?: { chatOnly?: boolean },
+  options?: {
+    chatOnly?: boolean;
+    intent?: string;
+    needsResearch?: boolean;
+    researchQuery?: string;
+  },
 ): AbortController {
   const controller = new AbortController();
 
@@ -24,7 +29,15 @@ export function streamAgent(
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ messages, workspace, ...(model ? { model } : {}), ...(options?.chatOnly ? { chatOnly: true } : {}) }),
+        body: JSON.stringify({
+          messages,
+          workspace,
+          ...(model ? { model } : {}),
+          ...(options?.chatOnly ? { chatOnly: true } : {}),
+          ...(options?.intent ? { intent: options.intent } : {}),
+          ...(options?.needsResearch ? { needsResearch: true } : {}),
+          ...(options?.researchQuery ? { researchQuery: options.researchQuery } : {}),
+        }),
         signal: controller.signal,
       });
     } catch (err) {
@@ -204,9 +217,12 @@ export function streamAgent(
                   screenshotUrl: parsed.screenshotUrl,
                 });
                 break;
-              case 'error':
-                handlers.onError(parsed.message || 'Unknown error');
+              case 'error': {
+                const msg = parsed.message || 'Unknown error';
+                const reason = typeof parsed.reason === 'string' ? parsed.reason.trim() : '';
+                handlers.onError(reason ? `${msg}: ${reason}` : msg);
                 break;
+              }
               case 'done':
                 handlers.onDone(parsed.filesModified || []);
                 break;

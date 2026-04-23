@@ -176,26 +176,45 @@ router.post(
         throw new ApiError(validation.error.errors[0].message, 400);
       }
 
-      const { title, code, language, description } = validation.data;
+      const { title, code, language, description, kind, artifactRef, thumbnail } =
+        validation.data;
       let files = req.body.files;
       if (typeof files === 'string') {
         try { files = JSON.parse(files); } catch { files = undefined; }
       }
+      let meta: Record<string, unknown> | undefined;
+      if (typeof req.body.meta === 'string') {
+        try {
+          const parsed = JSON.parse(req.body.meta);
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            meta = parsed as Record<string, unknown>;
+          }
+        } catch { /* ignore */ }
+      } else if (req.body.meta && typeof req.body.meta === 'object' && !Array.isArray(req.body.meta)) {
+        meta = req.body.meta as Record<string, unknown>;
+      }
 
+      const resolvedKind = kind ?? 'snippet';
       const post = new Post({
         userId: req.user!._id,
+        kind: resolvedKind,
         title,
-        code,
-        language: language.toLowerCase(),
+        code: code ?? '',
+        language: (language ?? 'text').toLowerCase(),
         description,
         image: req.file ? `/uploads/${req.file.filename}` : null,
         ...(files && typeof files === 'object' ? { files } : {}),
+        ...(artifactRef ? { artifactRef } : {}),
+        ...(thumbnail ? { thumbnail } : {}),
+        ...(meta ? { meta } : {}),
       });
 
       await post.save();
-      await post.populate('userId', 'username profileImage');
-
-      const prize = await checkAndAwardMilestone(req.user!._id, 'post');
+      // populate and milestone check are independent once the post is saved.
+      const [, prize] = await Promise.all([
+        post.populate('userId', 'username profileImage'),
+        checkAndAwardMilestone(req.user!._id, 'post'),
+      ]);
 
       res.status(201).json({
         message: 'Post created successfully',

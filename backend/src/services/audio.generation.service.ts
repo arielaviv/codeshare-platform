@@ -6,6 +6,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { AudioFile } from '../models/AudioFile';
 import { UsageEvent } from '../models/UsageEvent';
 import { craftBibleFor } from './writing/craft-bible';
+import { resolveUserModel } from './model-select';
 
 export interface AudioSSEWriter {
   send(event: string, data: unknown): void;
@@ -29,6 +30,7 @@ export interface GenerateAudioRequest {
   /** Music length ms (ElevenLabs Music), default 10000. */
   musicLengthMs?: number;
   sessionId?: string;
+  model?: string;
 }
 
 const DEFAULT_VOICE_ID = 'pNInz6obpgDQGcFmaJgB'; // Adam (English, neutral)
@@ -75,10 +77,10 @@ Rules specific to TTS delivery:
   section ("by contrast", "so", "meanwhile") — never "firstly / secondly /
   finally" which sound like bullet points when read aloud.`;
 
-async function draftScript(prompt: string): Promise<string> {
+async function draftScript(prompt: string, model: string): Promise<string> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' });
   const response = await client.messages.create({
-    model: 'claude-haiku-4-5-20251001',
+    model,
     max_tokens: 2048,
     system: SCRIPT_SYSTEM_PROMPT,
     messages: [{ role: 'user', content: prompt }],
@@ -245,6 +247,8 @@ export async function generateAudio(
 ): Promise<void> {
   writer.send('audio_started', { prompt: req.prompt });
 
+  const audioModel = resolveUserModel(req.model, 'claude-haiku-4-5-20251001');
+
   // Classify kind if not explicitly provided.
   const kind: AudioKind = req.kind ?? (await classifyAudioKind(req.prompt));
   writer.send('audio_kind', { kind });
@@ -357,7 +361,7 @@ export async function generateAudio(
   let script = req.scriptText?.trim() ?? '';
   if (!script) {
     try {
-      script = await draftScript(req.prompt);
+      script = await draftScript(req.prompt, audioModel);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       writer.send('error', { message: `Script draft failed: ${msg}` });

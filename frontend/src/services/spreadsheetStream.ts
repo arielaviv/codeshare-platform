@@ -2,16 +2,84 @@ import { getApiBase } from '../lib/apiBase';
 
 const API_URL = getApiBase();
 
+export type SheetPalette = 'gartner-blue' | 'gartner-warm' | 'light' | 'dark' | 'emerald' | 'slate';
+
+export type CellRole = 'header' | 'section' | 'label' | 'data' | 'subtotal' | 'total' | 'blank';
+
+export type CellFormat = 'text' | 'number' | 'integer' | 'currency' | 'percent';
+
+export interface SheetTheme {
+  palette: SheetPalette;
+  accentColor: string;
+  headerBg?: string;
+  headerFg?: string;
+  sectionBg?: string;
+  sectionFg?: string;
+  subtotalBg?: string;
+  totalBg?: string;
+  zebra?: boolean;
+}
+
+export interface RichCell {
+  value: string;
+  formula?: string;
+  role?: CellRole;
+  format?: CellFormat;
+  bold?: boolean;
+  align?: 'left' | 'center' | 'right';
+}
+
+export interface PythonExecutionStart {
+  executionId: string;
+  code: string;
+  language: string;
+  description?: string;
+}
+
+export interface PythonExecutionResult {
+  executionId: string;
+  status: 'success' | 'error';
+  stdout: string[];
+  stderr: string[];
+  error?: { name: string; value: string; traceback: string };
+  results: Array<{ png?: string; svg?: string; html?: string; text?: string }>;
+  outputFiles: Array<{ path: string; format: string; sizeBytes: number }>;
+  durationMs: number;
+}
+
 export interface SpreadsheetStreamHandlers {
-  onStarted(data: { topic: string }): void;
-  onSheetMeta(data: { index: number; name: string; rowCount: number }): void;
-  onSheetRow(data: { sheetIndex: number; rowIndex: number; cells: string[] }): void;
-  onCompleted(data: { sheetId: string; title: string; sheetCount: number }): void;
+  onStarted(data: { topic: string; model?: string }): void;
+  onTheme(data: { theme: SheetTheme }): void;
+  onSheetMeta(data: {
+    index: number;
+    name: string;
+    rowCount: number;
+    frozenRows?: number;
+    frozenCols?: number;
+    theme?: SheetTheme;
+  }): void;
+  onSheetRow(data: {
+    sheetIndex: number;
+    rowIndex: number;
+    cells: string[];
+    richCells?: RichCell[];
+  }): void;
+  onCompleted(data: {
+    sheetId: string;
+    title: string;
+    sheetCount: number;
+    theme?: SheetTheme;
+    xlsxUrl?: string;
+  }): void;
+  onPythonStart?(data: PythonExecutionStart): void;
+  onPythonResult?(data: PythonExecutionResult): void;
+  onXlsxReady?(data: { xlsxUrl: string; sizeBytes: number; durationMs: number }): void;
+  onXlsxFailed?(data: { message: string }): void;
   onError(message: string): void;
 }
 
 export function streamSpreadsheetGeneration(
-  req: { topic: string; sheetCount?: number; style?: 'simple' | 'detailed'; sessionId?: string },
+  req: { topic: string; sheetCount?: number; style?: 'simple' | 'detailed'; sessionId?: string; model?: string },
   handlers: SpreadsheetStreamHandlers
 ): AbortController {
   const controller = new AbortController();
@@ -62,6 +130,9 @@ export function streamSpreadsheetGeneration(
               case 'sheet_started':
                 handlers.onStarted(parsed);
                 break;
+              case 'sheet_theme':
+                handlers.onTheme(parsed);
+                break;
               case 'sheet_meta':
                 handlers.onSheetMeta(parsed);
                 break;
@@ -70,6 +141,18 @@ export function streamSpreadsheetGeneration(
                 break;
               case 'sheet_completed':
                 handlers.onCompleted(parsed);
+                break;
+              case 'code-execution-start':
+                handlers.onPythonStart?.(parsed);
+                break;
+              case 'code-execution-result':
+                handlers.onPythonResult?.(parsed);
+                break;
+              case 'sheet_xlsx_ready':
+                handlers.onXlsxReady?.(parsed);
+                break;
+              case 'sheet_xlsx_failed':
+                handlers.onXlsxFailed?.(parsed);
                 break;
               case 'error':
                 handlers.onError(parsed.message || 'Unknown error');

@@ -134,6 +134,7 @@ export interface GenerateDeckRequest {
   style?: 'professional' | 'casual' | 'academic';
   templateId?: string;
   researchBrief?: ResearchBrief;
+  model?: string;
 }
 
 export type UserIntent = 'deck' | 'code-app' | 'code-explain' | 'computer' | 'book';

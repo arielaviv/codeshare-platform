@@ -33,6 +33,7 @@ function parseSSEChunk(buffer: string): { events: ParsedEvent[]; remainder: stri
 export interface ResearchStreamOptions {
   onProgress?: (message: string) => void;
   signal?: AbortSignal;
+  model?: string;
 }
 
 export async function requestResearch(
@@ -46,7 +47,7 @@ export async function requestResearch(
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
-    body: JSON.stringify({ query }),
+    body: JSON.stringify({ query, ...(options.model ? { model: options.model } : {}) }),
     signal: options.signal,
   });
 

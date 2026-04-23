@@ -6,6 +6,7 @@ import { UsageEvent } from '../../models/UsageEvent';
 import { craftBibleFor } from '../writing/craft-bible';
 import { loadE2BConfig, connectComputeSandbox } from '../computer/e2b-client';
 import { upsertSession } from '../computer/e2b-session-store';
+import { resolveUserModel } from '../model-select';
 
 /**
  * Continuity Auditor — Slice 5 pass 1.
@@ -29,9 +30,9 @@ export interface RunAuditOptions {
   bookId: string;
   userId: mongoose.Types.ObjectId;
   sessionId?: string;
+  model?: string;
 }
 
-const AUDIT_MODEL = 'claude-sonnet-4-6';
 const SANDBOX_BOOK_DIR = '/home/user/book';
 
 const flagIssuesTool: Tool = {
@@ -159,6 +160,8 @@ export async function runContinuityAudit(
     return;
   }
 
+  const auditModel = resolveUserModel(opts.model);
+
   const book = await Book.findById(opts.bookId);
   if (!book) {
     writer.send('error', { message: 'Book not found' });
@@ -219,7 +222,7 @@ export async function runContinuityAudit(
   try {
     const client = new Anthropic({ apiKey });
     const response = await client.messages.create({
-      model: AUDIT_MODEL,
+      model: auditModel,
       max_tokens: 4096,
       system: buildSystemPrompt(),
       tools: [flagIssuesTool],
@@ -287,7 +290,7 @@ export async function runContinuityAudit(
       userId: opts.userId,
       sessionId: opts.sessionId ? new mongoose.Types.ObjectId(opts.sessionId) : undefined,
       feature: 'book-audit',
-      modelName: AUDIT_MODEL,
+      modelName: auditModel,
       inputTokens: usageInput,
       outputTokens: usageOutput,
     });

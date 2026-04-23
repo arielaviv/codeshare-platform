@@ -1,9 +1,8 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import { Brain, Check, ChevronDown, ChevronRight } from 'lucide-react';
-import type { BlueprintSpec, PricingEstimate, PermissionMode } from '../types/blueprint';
-import { formatUsd } from '../utils/formatUsd';
+import type { BlueprintSpec, PermissionMode } from '../types/blueprint';
 
-type SlotKind = 'primary' | 'discovery' | 'spin' | 'feedback';
+type SlotKind = 'primary' | 'feedback';
 
 interface SlotChoice {
   kind: SlotKind;
@@ -14,10 +13,8 @@ interface SlotChoice {
 
 interface PlanApprovalWidgetProps {
   plan: BlueprintSpec;
-  pricing: PricingEstimate;
   collapsed?: boolean;
   onAcceptBuild: (mode: PermissionMode, clearContext: boolean) => void;
-  onSpinForDiscount: () => void;
   onTellMr8: () => void;
   contextPercent?: number;
   /** When true, card renders as a compact "Plan accepted" banner instead
@@ -27,10 +24,8 @@ interface PlanApprovalWidgetProps {
 
 function PlanApprovalWidgetBase({
   plan,
-  pricing,
   collapsed,
   onAcceptBuild,
-  onSpinForDiscount,
   onTellMr8,
   contextPercent,
   accepted,
@@ -42,39 +37,24 @@ function PlanApprovalWidgetBase({
 
   const phases = Array.isArray(plan.phases) ? plan.phases : [];
   const stepCount = phases.reduce((s, p) => s + (p.steps?.length ?? 0), 0);
-  const savingsPct =
-    pricing.anchorCents > 0
-      ? Math.round(((pricing.anchorCents - pricing.dealerCents) / pricing.anchorCents) * 100)
-      : 0;
+  const phaseLabel = `${phases.length} phase${phases.length === 1 ? '' : 's'} · ${stepCount} step${stepCount === 1 ? '' : 's'}`;
 
   const choices: SlotChoice[] = [
     {
       kind: 'primary',
-      label: `Accept & Build — ${formatUsd(pricing.dealerCents)}`,
-      sublabel: `Claim Free Power-Up · ${tierLabel(pricing.tier)} build`,
-    },
-    {
-      kind: 'discovery',
-      label: 'Discovery upsell',
-      sublabel: 'Mr8 will suggest a feature during build (W4)',
-      disabled: true,
-    },
-    {
-      kind: 'spin',
-      label: 'Spin for discount',
-      sublabel: `Wheel could drop price as low as ${formatUsd(Math.max(15, Math.round(pricing.dealerCents * 0.1)))}`,
+      label: 'Accept & Build',
+      sublabel: phaseLabel,
     },
     {
       kind: 'feedback',
-      label: 'Tell Mr8 what to change...',
-      sublabel: 'Open the input to revise the plan',
+      label: 'Refine plan...',
+      sublabel: 'Tell Mr8 what to change',
     },
   ];
 
   const runAction = (choice: SlotChoice) => {
     if (choice.disabled) return;
     if (choice.kind === 'primary') onAcceptBuild('auto', false);
-    else if (choice.kind === 'spin') onSpinForDiscount();
     else if (choice.kind === 'feedback') onTellMr8();
   };
 
@@ -84,14 +64,9 @@ function PlanApprovalWidgetBase({
     const handler = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
       const tag = target?.tagName;
-      // Arrow keys always work (they navigate the plan choices) as long
-      // as focus isn't in another editable field.
       const inEditable = tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable;
 
       if (e.key === 'Enter') {
-        // Enter must NEVER hijack typing. Only accept when no editable is
-        // focused, OR when the focused textarea is empty (user's ready to
-        // pick the next action).
         if (inEditable) {
           if (tag !== 'TEXTAREA') return;
           const ta = target as HTMLTextAreaElement;
@@ -124,11 +99,6 @@ function PlanApprovalWidgetBase({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [collapsed, expanded, accepted]);
 
-  // Accepted state: slim banner with green check, plan title, and price.
-  // Keeps the card anchored in the transcript at the position it was emitted.
-  // Must live AFTER every hook call — hooks must run in the same order on
-  // every render, otherwise React crashes when the card flips from
-  // pending → accepted.
   if (accepted) {
     return (
       <div className="flex items-center gap-3 rounded-md border border-brand-green/40 bg-brand-green-soft dark:bg-brand-green/15 px-3 py-2 text-[12px] my-2">
@@ -137,9 +107,6 @@ function PlanApprovalWidgetBase({
           <span className="font-semibold">Plan accepted</span>
           <span className="text-ink-tertiary dark:text-[#888] truncate ml-2">{plan.title}</span>
         </div>
-        <span className="font-semibold text-brand-green flex-shrink-0">
-          {formatUsd(pricing.dealerCents)}
-        </span>
       </div>
     );
   }
@@ -155,13 +122,7 @@ function PlanApprovalWidgetBase({
           <ChevronRight size={11} className="text-ink-tertiary" />
           <Brain size={12} className="text-brand-green" />
           <span className="font-medium">Plan({plan.title})</span>
-          <span className="text-[10px] text-ink-tertiary">
-            {phases.length} phase{phases.length === 1 ? '' : 's'} · {stepCount} step
-            {stepCount === 1 ? '' : 's'}
-          </span>
-          <span className="ml-auto text-[10px] font-semibold text-brand-green">
-            {formatUsd(pricing.dealerCents)}
-          </span>
+          <span className="text-[10px] text-ink-tertiary">{phaseLabel}</span>
         </button>
       </div>
     );
@@ -172,7 +133,6 @@ function PlanApprovalWidgetBase({
       className="flex flex-col overflow-hidden rounded-lg border border-edge dark:border-[#2A2A2A] bg-white dark:bg-[#141414] text-[12px] shadow-sm"
       style={{ maxHeight: '70vh' }}
     >
-      {/* Green header strip — matches landing page banner */}
       <div className="flex-shrink-0 bg-brand-green text-white px-4 py-2.5">
         <div className="flex items-center gap-2">
           {collapsed && (
@@ -187,33 +147,13 @@ function PlanApprovalWidgetBase({
           )}
           <Brain size={14} className="text-white" />
           <span className="font-semibold text-[13px] text-white truncate">{plan.title}</span>
-          <span className="ml-auto flex items-baseline gap-2 flex-shrink-0">
-            {pricing.anchorCents > pricing.dealerCents && (
-              <span className="text-[11px] text-white/60 line-through">
-                {formatUsd(pricing.anchorCents)}
-              </span>
-            )}
-            <span className="text-[15px] font-bold text-white">
-              {formatUsd(pricing.dealerCents)}
-            </span>
-            {savingsPct > 0 && (
-              <span className="rounded bg-white/20 px-1.5 py-0.5 text-[10px] font-semibold text-white">
-                {savingsPct}% off
-              </span>
-            )}
-          </span>
         </div>
       </div>
 
-      {/* Summary row */}
       <div className="flex-shrink-0 border-b border-edge dark:border-[#2A2A2A] px-4 py-2.5 bg-surface-secondary dark:bg-[#0F0F0F]">
         <p className="text-ink dark:text-[#E8E8E8] leading-snug">{plan.summary}</p>
-        <div className="mt-1 text-[11px] text-ink-tertiary dark:text-[#666]">
-          {tierLabel(pricing.tier)} · {pricing.modelTier} · ~{pricing.estimatedTurns} turns
-        </div>
       </div>
 
-      {/* Phases + steps */}
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
         {phases.map((phase, phaseIdx) => (
           <div key={`phase-${String(phaseIdx)}`} className="mb-3 last:mb-0">
@@ -235,7 +175,6 @@ function PlanApprovalWidgetBase({
         ))}
       </div>
 
-      {/* Choice buttons */}
       {!collapsed && (
         <div className="flex-shrink-0 border-t border-edge dark:border-[#2A2A2A] p-2 bg-surface-secondary dark:bg-[#0F0F0F]">
           {choices.map((choice, idx) => {
@@ -314,19 +253,6 @@ function PlanApprovalWidgetBase({
       )}
     </div>
   );
-}
-
-function tierLabel(tier: PricingEstimate['tier']): string {
-  switch (tier) {
-    case 'polish':
-      return 'Polish';
-    case 'brains':
-      return 'Brains';
-    case 'power':
-      return 'Power';
-    default:
-      return tier;
-  }
 }
 
 export const PlanApprovalWidget = memo(PlanApprovalWidgetBase);

@@ -1,4 +1,5 @@
 import type { WebContainer, FileSystemTree } from '@webcontainer/api';
+import { withPreviewInstrumentation, injectBridgeIntoHtml, MR8_ERROR_BRIDGE_SOURCE } from './mr8-error-bridge';
 
 export type WCStatus = 'idle' | 'booting' | 'mounting' | 'installing' | 'starting' | 'running' | 'error';
 
@@ -43,6 +44,7 @@ class WebContainerManager {
   private listeners: Set<Listener> = new Set();
   private installedPkgHash: string | null = null;
   private currentFiles: Map<string, string> = new Map();
+  private devProcessRunning = false;
 
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener);
@@ -88,14 +90,33 @@ class WebContainerManager {
   }
 
   async run(files: Map<string, string>): Promise<void> {
+    // Idempotent: if the dev server is already running (or starting) we
+    // just diff files instead of remounting + respawning. Tab-switches
+    // unmount PreviewPanel, which otherwise would re-call run() and
+    // tear the whole environment down needlessly.
+    if (
+      this.devProcessRunning &&
+      (this.state.status === 'running' || this.state.status === 'starting' || this.state.status === 'installing')
+    ) {
+      await this.updateFiles(files);
+      return;
+    }
+
     const container = await this.boot();
     if (!container) return;
 
     this.currentFiles = new Map(files);
 
-    this.update({ status: 'mounting', installLogs: '', devLogs: '' });
+    // Only reset logs on a true fresh boot — otherwise we'd wipe the
+    // terminal every time the user toggles back to Preview.
+    const isFreshBoot = !this.devProcessRunning;
+    if (isFreshBoot) {
+      this.update({ status: 'mounting', installLogs: '', devLogs: '' });
+    } else {
+      this.update({ status: 'mounting' });
+    }
 
-    const filesWithEnv = new Map(files);
+    const filesWithEnv = withPreviewInstrumentation(files);
     if (!filesWithEnv.has('.env')) {
       const envLines: string[] = [];
       const mapboxToken = import.meta.env.VITE_MAPBOX_TOKEN;
@@ -134,13 +155,18 @@ class WebContainerManager {
       this.installedPkgHash = pkgHash;
     }
 
+    if (this.devProcessRunning) {
+      return;
+    }
+
     this.update({ status: 'starting' });
     const devProcess = await container.spawn('npm', ['run', 'dev']);
+    this.devProcessRunning = true;
 
     devProcess.output.pipeTo(new WritableStream({
       write: (chunk) => {
         const logs = (this.state.devLogs + chunk).slice(-50000);
-          this.update({ devLogs: logs });
+        this.update({ devLogs: logs });
       },
     }));
 
@@ -151,6 +177,7 @@ class WebContainerManager {
     // If the dev process exits before server-ready, surface the tail of
     // its logs — otherwise the preview just hangs on "starting".
     void devProcess.exit.then((code) => {
+      this.devProcessRunning = false;
       if (this.state.status !== 'running') {
         const tail = this.state.devLogs.split('\n').slice(-15).join('\n');
         this.update({
@@ -174,8 +201,15 @@ class WebContainerManager {
   async updateFiles(files: Map<string, string>): Promise<void> {
     if (!this.container || this.state.status === 'idle' || this.state.status === 'error') return;
 
+    // Make sure the error bridge and its index.html tag survive updates.
+    // The agent may rewrite index.html mid-session; we reapply the patch.
+    if (!files.has('mr8-error-bridge.js')) {
+      try { await this.container.fs.writeFile('mr8-error-bridge.js', MR8_ERROR_BRIDGE_SOURCE); } catch { /* ignore */ }
+    }
+
     for (const [path, content] of files) {
-      if (this.currentFiles.get(path) !== content) {
+      const effective = path === 'index.html' ? injectBridgeIntoHtml(content) : content;
+      if (this.currentFiles.get(path) !== effective) {
         // Ensure parent dir exists — WebContainer's fs.writeFile does NOT
         // auto-create parents, and the agent can stream files in any
         // order (e.g., src/index.css before src/main.tsx), so any nested
@@ -191,7 +225,7 @@ class WebContainerManager {
           }
         }
         try {
-          await this.container.fs.writeFile(path, content);
+          await this.container.fs.writeFile(path, effective);
         } catch (err) {
           // Surface to devLogs so the user/devtools see the real failure
           // instead of a silent unhandled rejection.
@@ -202,12 +236,19 @@ class WebContainerManager {
     }
 
     for (const path of this.currentFiles.keys()) {
+      if (path === 'mr8-error-bridge.js') continue;
       if (!files.has(path)) {
         try { await this.container.fs.rm(path); } catch { /* file may not exist */ }
       }
     }
 
-    this.currentFiles = new Map(files);
+    // Store the effective (bridge-patched) content in currentFiles so the
+    // next diff doesn't keep re-patching identical HTML.
+    const effectiveMap = new Map<string, string>();
+    for (const [p, c] of files) {
+      effectiveMap.set(p, p === 'index.html' ? injectBridgeIntoHtml(c) : c);
+    }
+    this.currentFiles = effectiveMap;
   }
 
   async destroy(): Promise<void> {
@@ -215,6 +256,7 @@ class WebContainerManager {
       this.container.teardown();
       this.container = null;
     }
+    this.devProcessRunning = false;
     this.installedPkgHash = null;
     this.currentFiles.clear();
     this.update({ status: 'idle', url: null, error: null, installLogs: '', devLogs: '' });

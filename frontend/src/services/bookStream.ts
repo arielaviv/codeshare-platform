@@ -40,7 +40,7 @@ export interface BookStreamHandlers {
 }
 
 export function streamBookGeneration(
-  req: { prompt: string; targetWords?: number; sessionId?: string },
+  req: { prompt: string; targetWords?: number; sessionId?: string; model?: string },
   handlers: BookStreamHandlers
 ): AbortController {
   const controller = new AbortController();

@@ -5,6 +5,7 @@ import mongoose from 'mongoose';
 import Anthropic from '@anthropic-ai/sdk';
 import { VideoFile } from '../models/VideoFile';
 import { UsageEvent } from '../models/UsageEvent';
+import { resolveUserModel } from './model-select';
 
 export interface VideoSSEWriter {
   send(event: string, data: unknown): void;
@@ -15,6 +16,7 @@ export interface GenerateVideoRequest {
   prompt: string;
   durationSec?: 5 | 10;
   sessionId?: string;
+  model?: string;
 }
 
 const RUNWAY_API = 'https://api.dev.runwayml.com/v1';
@@ -34,11 +36,11 @@ prompt — no preamble, no quotes, no markdown.
 Add cinematography hints (camera angle, lighting, mood, motion) but stay
 true to the user's intent. Keep under 250 chars. No emojis.`;
 
-async function refinePrompt(userPrompt: string): Promise<string> {
+async function refinePrompt(userPrompt: string, model: string): Promise<string> {
   try {
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' });
     const response = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model,
       max_tokens: 256,
       system: REFINE_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userPrompt }],
@@ -131,8 +133,10 @@ export async function generateVideo(
   const durationSec: 5 | 10 = req.durationSec === 10 ? 10 : 5;
   writer.send('video_started', { prompt: req.prompt, durationSec });
 
+  const refineModel = resolveUserModel(req.model, 'claude-haiku-4-5-20251001');
+
   // 1) Refine prompt
-  const refined = await refinePrompt(req.prompt);
+  const refined = await refinePrompt(req.prompt, refineModel);
   writer.send('prompt_refined', { refinedPrompt: refined });
 
   // 2) Create Runway task

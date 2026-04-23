@@ -8,15 +8,31 @@ export interface User {
   hasClaimedWelcomeBonus: boolean;
 }
 
+export type PostKind =
+  | 'snippet'
+  | 'code-app'
+  | 'deck'
+  | 'book'
+  | 'video'
+  | 'audio'
+  | 'image'
+  | 'visualization'
+  | 'spreadsheet'
+  | 'research';
+
 export interface Post {
   _id: string;
   userId: User;
+  kind?: PostKind;
   title: string;
   code: string;
   language: string;
   description?: string;
   image?: string;
   files?: Record<string, string>;
+  artifactRef?: string;
+  thumbnail?: string;
+  meta?: Record<string, unknown>;
   aiExplanation?: string;
   likesCount: number;
   commentsCount: number;

@@ -22,3 +22,16 @@ export function getStaticBase(): string {
   // For relative defaults (`/api` → ``) the empty string lets Vite's proxy handle `/uploads`.
   return apiBase.replace(/\/api$/, '');
 }
+
+/**
+ * Resolve an asset URL for <img>/<video>/<audio>. Absolute URLs, data URIs,
+ * and blob URLs pass through; a leading-slash path is prefixed with the
+ * static base so it resolves under the backend's `/uploads` mount.
+ */
+export function resolveAssetUrl(raw: string | null | undefined): string | undefined {
+  if (!raw) return undefined;
+  if (raw.startsWith('http://') || raw.startsWith('https://') || raw.startsWith('data:') || raw.startsWith('blob:')) {
+    return raw;
+  }
+  return `${getStaticBase()}${raw}`;
+}

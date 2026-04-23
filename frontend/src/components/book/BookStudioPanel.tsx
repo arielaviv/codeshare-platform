@@ -51,6 +51,19 @@ interface Props {
    * freshly-persisted server state.
    */
   refreshTick?: number;
+  /**
+   * Fired when the Bundler finishes and a downloadable zip is ready. Used by
+   * AIChatPage to enable the unified top-toolbar Share button for this book.
+   */
+  onBookReady?: (info: {
+    bookId: string;
+    title: string;
+    author?: string;
+    coverImageUrl?: string;
+    bundleUrl: string;
+    bundleSizeBytes: number;
+    wordCount?: number;
+  }) => void;
 }
 
 export interface BookChapterRecord {
@@ -117,7 +130,7 @@ interface BookRecord {
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 
-export default function BookStudioPanel({ bookId, liveMode, liveReaderRef, initialSection, refreshTick }: Props): JSX.Element {
+export default function BookStudioPanel({ bookId, liveMode, liveReaderRef, initialSection, refreshTick, onBookReady }: Props): JSX.Element {
   const [book, setBook] = useState<BookRecord | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -370,15 +383,35 @@ export default function BookStudioPanel({ bookId, liveMode, liveReaderRef, initi
         onProgress: () => {},
         onBundleReady: (data) => {
           appendArtifact({ kind: 'bundle-zip', url: data.bundleUrl, sizeBytes: data.sizeBytes });
-          setBook((prev) =>
-            prev
+          setBook((prev) => {
+            const next = prev
               ? {
                   ...prev,
                   bundleUrl: data.bundleUrl,
-                  status: 'done',
+                  status: 'done' as const,
                 }
-              : prev
-          );
+              : prev;
+            if (next && onBookReady) {
+              const cover =
+                next.selectedCoverIdx != null && next.coverVariants
+                  ? next.coverVariants.find((c) => c.idx === next.selectedCoverIdx)?.imageUrl
+                  : next.coverVariants?.[0]?.imageUrl;
+              const wordCount = (next.chapters ?? []).reduce<number>(
+                (sum, c) => sum + (typeof c.wordCount === 'number' ? c.wordCount : 0),
+                0
+              );
+              onBookReady({
+                bookId: next._id,
+                title: next.title,
+                author: next.author,
+                coverImageUrl: cover,
+                bundleUrl: data.bundleUrl,
+                bundleSizeBytes: data.sizeBytes,
+                wordCount: wordCount > 0 ? wordCount : undefined,
+              });
+            }
+            return next;
+          });
           setBookReady({ bundleUrl: data.bundleUrl, bundleSizeBytes: data.sizeBytes });
         },
         onStageComplete: () => {

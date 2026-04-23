@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../services/api';
-import PostCard from '../components/PostCard';
+import FeedCard from '../components/feed/FeedCard';
 import { Post } from '../types';
 import { getStaticBase } from '../lib/apiBase';
 
@@ -26,7 +26,7 @@ export default function ProfilePage() {
     },
   });
 
-  const { data: postsData, refetch } = useQuery({
+  const { data: postsData } = useQuery({
     queryKey: ['userPosts', id],
     queryFn: async () => {
       const { data } = await api.get(`/users/${id}/posts`);
@@ -134,7 +134,7 @@ export default function ProfilePage() {
       <h2 className="section-label px-0 mb-3">Posts ({posts.length})</h2>
       <div className="space-y-4">
         {posts.map((post: Post) => (
-          <PostCard key={post._id} post={post} onUpdate={refetch} />
+          <FeedCard key={post._id} post={post} />
         ))}
       </div>
     </div>

@@ -18,7 +18,7 @@ export interface VideoStreamHandlers {
 }
 
 export function streamVideoGeneration(
-  req: { prompt: string; durationSec?: 5 | 10; sessionId?: string },
+  req: { prompt: string; durationSec?: 5 | 10; sessionId?: string; model?: string },
   handlers: VideoStreamHandlers
 ): AbortController {
   const controller = new AbortController();

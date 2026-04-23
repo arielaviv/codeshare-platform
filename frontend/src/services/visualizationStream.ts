@@ -11,7 +11,7 @@ export interface VisualizationStreamHandlers {
 }
 
 export function streamVisualization(
-  req: { prompt: string; preferredCharts?: ChartKind[]; sessionId?: string },
+  req: { prompt: string; preferredCharts?: ChartKind[]; sessionId?: string; model?: string },
   handlers: VisualizationStreamHandlers
 ): AbortController {
   const controller = new AbortController();

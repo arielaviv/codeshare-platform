@@ -68,6 +68,20 @@ after a text-only message — if you say "I'll write the files now" but
 emit no write_file tool call, the user sees a dead end. Either call
 the tools immediately, or say nothing about future actions.
 
+STOP CONDITIONS (the ONLY ways your turn legitimately ends):
+1. You called verify_build and it returned "passed" → write closer + STOP.
+2. You called verify_build 3 times and the 3rd still failed → tell the
+   user what's still broken and ask if they want to keep iterating.
+3. You completed a non-build task (chat reply, single image, code
+   explanation, single-file edit) → brief reply + STOP.
+4. You called propose_plan and the user has not yet accepted → one
+   sentence acknowledging the plan + STOP.
+If none of the above apply and you have written any scaffold files,
+you MUST emit another tool call (write_file for the next component,
+or verify_build if all files are in place). Saying "I'll now..." or
+"Next, let me..." or "Task completed" without an immediate tool call
+is a bug — your turn will be auto-continued by the runtime.
+
 BUILD VERIFICATION (critical — every app build):
 After the LAST write_file of an app build, before writing the closer
 paragraph, you MUST call verify_build({ userPrompt: "<exact original
@@ -489,7 +503,58 @@ Current workspace files:
 ${fileList}`;
 }
 
-const ALLOWED_MODELS = ['claude-haiku-4-5-20251001', 'claude-sonnet-4-6', 'claude-opus-4-6'];
+const ALLOWED_MODELS = ['claude-haiku-4-5-20251001', 'claude-sonnet-4-6', 'claude-opus-4-7'];
+
+/**
+ * A stop is "premature" when the model produced scaffold files but hasn't
+ * finished the build (no root component yet, or finished files but never
+ * called verify_build). Plan-proposal turns intentionally stop after one
+ * tool call and are NOT premature.
+ */
+function isPrematureStop(
+  workspace: Map<string, string>,
+  flags: { verifyBuildCalled: boolean; proposePlanCalled: boolean },
+): boolean {
+  if (flags.proposePlanCalled) return false;
+  const paths = Array.from(workspace.keys());
+  if (paths.length === 0) return false;
+  const hasPkg = workspace.has('package.json');
+  const hasHtml = workspace.has('index.html');
+  const hasEntry = workspace.has('src/main.tsx') || workspace.has('src/main.ts');
+  const hasApp =
+    workspace.has('src/App.tsx') ||
+    workspace.has('src/App.ts') ||
+    workspace.has('src/app.tsx');
+  const looksLikeBuild = hasPkg && (hasHtml || hasEntry);
+  if (!looksLikeBuild) return false;
+  if (!hasApp) return true;
+  if (!flags.verifyBuildCalled) return true;
+  return false;
+}
+
+function buildPrematureStopNudge(
+  workspace: Map<string, string>,
+  verifyBuildCalled: boolean,
+): string {
+  const hasApp =
+    workspace.has('src/App.tsx') ||
+    workspace.has('src/App.ts') ||
+    workspace.has('src/app.tsx');
+  if (!hasApp) {
+    return [
+      'Your previous response described work without calling any tool. The build is incomplete — workspace has scaffold files but no src/App.tsx or root component.',
+      'Continue NOW by calling write_file for src/App.tsx with a real, complete implementation that matches the user request. Then write any remaining components, then call verify_build.',
+      'Do NOT reply with text-only "I\'ll write it now" — emit the write_file tool call in this response.',
+    ].join('\n');
+  }
+  if (!verifyBuildCalled) {
+    return [
+      'Your previous response ended without calling verify_build. The build looks complete but has not been verified.',
+      'Continue NOW by calling verify_build({ userPrompt: "<exact original user request>" }). If it reports issues, write fixes and verify again (cap 3). If it passes, write the one-line closer and stop.',
+    ].join('\n');
+  }
+  return 'Continue the build — emit the next required tool call now.';
+}
 
 export async function runCodeAgent(
   messages: ChatMessage[],
@@ -533,6 +598,10 @@ export async function runCodeAgent(
   }));
 
   let iterations = 0;
+  let verifyBuildCalled = false;
+  let proposePlanCalled = false;
+  let prematureStopRecoveries = 0;
+  const MAX_PREMATURE_STOP_RECOVERIES = 2;
 
   while (iterations < MAX_ITERATIONS) {
     iterations++;
@@ -541,15 +610,36 @@ export async function runCodeAgent(
     const isChatOnly = options?.chatOnly === true;
     const chatSystemPrompt =
       'You are Mr8, a helpful AI assistant. Reply concisely. Use plain prose with light markdown. No emojis. No exclamation points for emphasis.';
-    const response = await client.messages.create({
-      model: isChatOnly
-        ? 'claude-haiku-4-5-20251001'
-        : (model && ALLOWED_MODELS.includes(model)) ? model : 'claude-haiku-4-5-20251001',
-      max_tokens: 8192,
-      system: isChatOnly ? chatSystemPrompt : buildSystemPrompt(workspace, soulSnippet),
-      ...(isChatOnly ? {} : { tools: allToolDefinitions }),
-      messages: apiMessages,
-    });
+    const resolvedModel = isChatOnly
+      ? 'claude-haiku-4-5-20251001'
+      : (model && ALLOWED_MODELS.includes(model)) ? model : 'claude-haiku-4-5-20251001';
+    if (!isChatOnly) {
+      console.log(`[code-agent] iteration=${iterations} model=${resolvedModel}`);
+    }
+    // Raised from 8192 → 16384 for non-chat turns. Opus tends to emit a few
+    // hundred tokens of narrative + multiple write_file calls per iteration;
+    // 8192 left too little headroom and caused the agent to stop text-only
+    // ("I'll write App.tsx next…") mid-build, triggering the premature-stop
+    // recovery before it could finish the entry component.
+    let response;
+    try {
+      response = await client.messages.create({
+        model: resolvedModel,
+        max_tokens: isChatOnly ? 4096 : 16384,
+        system: isChatOnly ? chatSystemPrompt : buildSystemPrompt(workspace, soulSnippet),
+        ...(isChatOnly ? {} : { tools: allToolDefinitions }),
+        messages: apiMessages,
+      });
+    } catch (err) {
+      const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+      const status = (err as { status?: number })?.status;
+      console.error(
+        `[code-agent] Anthropic call failed at iteration=${iterations} model=${resolvedModel} workspaceFiles=${workspace.size}` +
+          (status ? ` status=${status}` : '') +
+          ` — ${detail}`,
+      );
+      throw err;
+    }
 
     const toolBlocks = response.content.filter(
       (block): block is Extract<ContentBlock, { type: 'tool_use' }> =>
@@ -568,12 +658,28 @@ export async function runCodeAgent(
     }
 
     if (response.stop_reason !== 'tool_use' || toolBlocks.length === 0) {
+      if (
+        !isChatOnly &&
+        prematureStopRecoveries < MAX_PREMATURE_STOP_RECOVERIES &&
+        isPrematureStop(workspace, { verifyBuildCalled, proposePlanCalled })
+      ) {
+        prematureStopRecoveries++;
+        const nudge = buildPrematureStopNudge(workspace, verifyBuildCalled);
+        console.log(
+          `[code-agent] premature stop detected (recovery ${prematureStopRecoveries}/${MAX_PREMATURE_STOP_RECOVERIES}): ${nudge}`,
+        );
+        apiMessages.push({ role: 'assistant', content: response.content });
+        apiMessages.push({ role: 'user', content: nudge });
+        continue;
+      }
       break;
     }
 
     const toolResults: { type: 'tool_result'; tool_use_id: string; content: string }[] = [];
 
     for (const toolBlock of toolBlocks) {
+      if (toolBlock.name === 'verify_build') verifyBuildCalled = true;
+      if (toolBlock.name === 'propose_plan') proposePlanCalled = true;
       writer.send('tool_call', {
         name: toolBlock.name,
         input: toolBlock.input,

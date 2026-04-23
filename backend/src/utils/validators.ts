@@ -37,23 +37,55 @@ export const updateUserSchema = z.object({
     .optional(),
 });
 
+const postKindEnum = z.enum([
+  'snippet',
+  'code-app',
+  'deck',
+  'book',
+  'video',
+  'audio',
+  'image',
+  'visualization',
+  'spreadsheet',
+  'research',
+]);
+
 export const createPostSchema = z.object({
+  kind: postKindEnum.optional(),
   title: z
     .string()
     .min(1, 'Title is required')
     .max(200, 'Title cannot exceed 200 characters'),
   code: z
     .string()
-    .min(1, 'Code is required')
-    .max(10000, 'Code cannot exceed 10000 characters'),
+    .max(10000, 'Code cannot exceed 10000 characters')
+    .optional(),
   language: z
     .string()
-    .min(1, 'Language is required'),
+    .max(60, 'Language too long')
+    .optional(),
   description: z
     .string()
     .max(1000, 'Description cannot exceed 1000 characters')
     .optional(),
-});
+  artifactRef: z
+    .string()
+    .max(200, 'artifactRef too long')
+    .optional(),
+  thumbnail: z
+    .string()
+    .max(2048, 'thumbnail too long')
+    .optional(),
+}).refine(
+  (v) => {
+    // Legacy snippet posts still need code+language to be meaningful.
+    const isSnippet = (v.kind ?? 'snippet') === 'snippet';
+    if (!isSnippet) return true;
+    return typeof v.code === 'string' && v.code.length > 0 &&
+           typeof v.language === 'string' && v.language.length > 0;
+  },
+  { message: 'Code and language are required for snippets' }
+);
 
 export const updatePostSchema = z.object({
   title: z
@@ -166,6 +198,14 @@ const researchBriefSchema = z.object({
   cappedAt: z.enum(['actions', 'time']).optional(),
 });
 
+const userModelSchema = z
+  .enum([
+    'claude-haiku-4-5-20251001',
+    'claude-sonnet-4-6',
+    'claude-opus-4-7',
+  ])
+  .optional();
+
 export const generateDeckSchema = z.object({
   topic: z
     .string()
@@ -181,6 +221,7 @@ export const generateDeckSchema = z.object({
   researchBrief: researchBriefSchema.optional(),
   /** When true, skip the inline browser research step. Default false. */
   skipResearch: z.boolean().optional(),
+  model: userModelSchema,
 });
 
 export const generateBookSchema = z.object({
@@ -195,6 +236,7 @@ export const generateBookSchema = z.object({
     .max(120000, 'Target cannot exceed 120,000 words')
     .optional(),
   sessionId: z.string().optional(),
+  model: userModelSchema,
 });
 
 export const generateBookCoverSchema = z.object({
@@ -213,6 +255,7 @@ export const generateBookCoverSchema = z.object({
     .max(120, 'Author name too long')
     .optional(),
   sessionId: z.string().optional(),
+  model: userModelSchema,
 });
 
 export const selectCoverSchema = z.object({
@@ -298,6 +341,7 @@ export const draftBookSchema = z.object({
   chapterN: z.number().int().min(1).max(100).optional(),
   directive: z.string().max(2000).optional(),
   sessionId: z.string().optional(),
+  model: userModelSchema,
 }).refine(
   (v) => v.stage !== 'regenerate-chapter' || typeof v.chapterN === 'number',
   { message: 'chapterN is required when stage is regenerate-chapter' }
@@ -315,11 +359,13 @@ export const polishBookSchema = z.object({
   directives: z.string().max(1000).optional(),
   skipAudit: z.boolean().optional(),
   sessionId: z.string().optional(),
+  model: userModelSchema,
 });
 
 export const auditBookSchema = z.object({
   bookId: z.string().min(1).max(64),
   sessionId: z.string().optional(),
+  model: userModelSchema,
 });
 
 export const reEditChapterSchema = z.object({
@@ -328,6 +374,7 @@ export const reEditChapterSchema = z.object({
   aggressiveness: z.enum(['light', 'standard', 'heavy']),
   directives: z.string().max(1000).optional(),
   sessionId: z.string().optional(),
+  model: userModelSchema,
 });
 
 export const formatBookSchema = z.object({

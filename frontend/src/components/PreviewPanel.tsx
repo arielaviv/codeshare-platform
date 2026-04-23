@@ -5,6 +5,7 @@ import { Tooltip } from './ui/Tooltip';
 import { ThemeEditor } from './preview/ThemeEditor';
 import { LibraryPanel } from './preview/LibraryPanel';
 import { EditModeToolbar, type EditPatch } from './preview/EditModeToolbar';
+import { PreviewErrorOverlay, type PreviewErrorInfo } from './preview/PreviewErrorOverlay';
 import Mr8LogoLoader from './shared/Mr8LogoLoader';
 
 type DeviceMode = 'desktop' | 'tablet' | 'phone';
@@ -22,13 +23,17 @@ interface PreviewPanelProps {
   projectName?: string;
   onAddAiChat?: () => void;
   onSaveEdits?: (edits: EditPatch[], selectorHint: string) => void;
+  onFixError?: (error: PreviewErrorInfo) => void;
 }
 
 type RightDrawer = null | 'theme' | 'library';
 
-export default function PreviewPanel({ files, isGenerating, fallbackHtml, projectName, onAddAiChat, onSaveEdits }: PreviewPanelProps) {
+export default function PreviewPanel({ files, isGenerating, fallbackHtml, projectName, onAddAiChat, onSaveEdits, onFixError }: PreviewPanelProps) {
   const [wcState, setWCState] = useState<WCState>(wcManager.getState());
-  const [useWC, setUseWC] = useState(false);
+  // Derive from manager state so tab-switches that unmount this component
+  // don't reset the preview lifecycle. If the wc is booted in any way —
+  // mounting / installing / starting / running — we want the preview UI.
+  const useWC = wcState.status !== 'idle' && wcState.status !== 'error';
   const [device, setDevice] = useState<DeviceMode>('desktop');
   const [fullScreen, setFullScreen] = useState(false);
   const [drawer, setDrawer] = useState<RightDrawer>(null);
@@ -39,23 +44,48 @@ export default function PreviewPanel({ files, isGenerating, fallbackHtml, projec
     text: string;
   }>(null);
   const [edits, setEdits] = useState<EditPatch[]>([]);
+  const [previewError, setPreviewError] = useState<PreviewErrorInfo | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const iframeWrapRef = useRef<HTMLDivElement | null>(null);
   const hasBootedRef = useRef(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
 
-  // Bridge: listen for hover/select posts from the injected edit script.
+  // Bridge: listen for hover/select posts from the injected edit script,
+  // plus preview-error events from the Mr8 error bridge.
   useEffect(() => {
     const onMessage = (e: MessageEvent) => {
-      const m = e.data as { type?: string; rect?: { x: number; y: number; w: number; h: number }; tag?: string; text?: string } | null;
+      const m = e.data as {
+        type?: string;
+        rect?: { x: number; y: number; w: number; h: number };
+        tag?: string;
+        text?: string;
+        message?: string;
+        stack?: string;
+        file?: string;
+        line?: number;
+      } | null;
       if (!m || typeof m.type !== 'string') return;
       if (!m.type.startsWith('mr8/')) return;
+      if (m.type === 'mr8/preview-error') {
+        const message = (m.message ?? '').trim();
+        if (!message) return;
+        setPreviewError({
+          message,
+          stack: m.stack,
+          file: m.file,
+          line: m.line,
+        });
+        return;
+      }
+      if (m.type === 'mr8/preview-error-clear') {
+        setPreviewError(null);
+        return;
+      }
       const wrap = iframeWrapRef.current;
       if (!wrap) return;
       const wrapRect = wrap.getBoundingClientRect();
       const r = m.rect;
       if (!r) return;
-      // Translate iframe-local coords to viewport coords.
       const adjusted = { x: r.x + wrapRect.left, y: r.y + wrapRect.top, w: r.w, h: r.h };
       if (m.type === 'mr8/select') {
         setSelection({ rect: adjusted, tag: m.tag ?? 'div', text: m.text ?? '' });
@@ -64,6 +94,15 @@ export default function PreviewPanel({ files, isGenerating, fallbackHtml, projec
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
   }, []);
+
+  const handleFixError = useCallback(
+    (err: PreviewErrorInfo) => {
+      if (!onFixError) return;
+      onFixError(err);
+      setPreviewError(null);
+    },
+    [onFixError],
+  );
 
   // Toggle edit mode → post message into iframe.
   useEffect(() => {
@@ -107,14 +146,27 @@ export default function PreviewPanel({ files, isGenerating, fallbackHtml, projec
   useEffect(() => wcManager.subscribe(setWCState), []);
 
   useEffect(() => {
-    if (hasBootedRef.current || !files.has('package.json')) return;
+    if (!files.has('package.json')) return;
     const hasSrc = Array.from(files.keys()).some(k => k.startsWith('src/'));
-    if (files.has('index.html') || hasSrc) {
-      setUseWC(true);
-      hasBootedRef.current = true;
-      wcManager.run(files);
-    }
-  }, [files]);
+    if (!(files.has('index.html') || hasSrc)) return;
+    // Don't boot while the agent is still streaming files. Booting mid-write
+    // means Vite tries to resolve imports (e.g. `./App` from main.tsx)
+    // before those files exist — producing a spurious preview error overlay.
+    // Once Vite is already running, the debounced updateFiles effect below
+    // keeps it in sync without re-triggering boot.
+    if (isGenerating && !hasBootedRef.current) return;
+    // Require an App component if main.tsx is present — main.tsx's standard
+    // `import App from './App'` will fail otherwise. Matches the system prompt
+    // that every Vite+React build ships src/App.tsx.
+    const hasEntry = files.has('src/main.tsx') || files.has('src/main.ts');
+    const hasApp =
+      files.has('src/App.tsx') || files.has('src/App.ts') || files.has('src/app.tsx');
+    if (hasEntry && !hasApp && !hasBootedRef.current) return;
+    // wcManager.run is idempotent — when the dev server is already running
+    // it falls through to updateFiles instead of remounting + respawning.
+    hasBootedRef.current = true;
+    void wcManager.run(files);
+  }, [files, isGenerating]);
 
   useEffect(() => {
     if (!useWC || wcState.status !== 'running') return;
@@ -124,9 +176,8 @@ export default function PreviewPanel({ files, isGenerating, fallbackHtml, projec
   }, [files, useWC, wcState.status]);
 
   const refresh = useCallback(() => {
-    wcManager.destroy().then(() => {
+    void wcManager.destroy().then(() => {
       hasBootedRef.current = false;
-      setUseWC(false);
     });
   }, []);
 
@@ -223,6 +274,13 @@ export default function PreviewPanel({ files, isGenerating, fallbackHtml, projec
                 onSave={saveEdits}
                 onClose={() => setSelection(null)}
                 edited={edits.length > 0}
+              />
+            )}
+            {previewError && (
+              <PreviewErrorOverlay
+                error={previewError}
+                onFixWithAi={handleFixError}
+                onDismiss={() => setPreviewError(null)}
               />
             )}
           </div>

@@ -7,6 +7,7 @@ import { UsageEvent } from '../models/UsageEvent';
 import { loadE2BConfig, connectComputeSandbox } from './computer/e2b-client';
 import { getSession, upsertSession } from './computer/e2b-session-store';
 import { generateImageToFile, ImageGenerationError } from './image-generation';
+import { resolveUserModel } from './model-select';
 
 export interface BookCoverSSEWriter {
   send(event: string, data: unknown): void;
@@ -21,9 +22,9 @@ export interface GenerateBookCoverOptions {
   /** Optional author name override to persist on the book. */
   author?: string;
   sessionId?: string;
+  model?: string;
 }
 
-const COVER_BRIEF_MODEL = 'claude-sonnet-4-6';
 const COVER_IMAGE_SIZE = '1024x1536' as const; // 2:3 portrait — book cover ratio
 const COVER_IMAGE_QUALITY = 'medium' as const;
 const COVER_COUNT = 6;
@@ -469,6 +470,8 @@ export async function generateBookCovers(
 
   writer.send('briefing_started', { bookCount: COVER_COUNT });
 
+  const coverModel = resolveUserModel(opts.model);
+
   // Stage A — brief the art
   let briefsInput: CoverBriefToolInput;
   let briefUsageInput = 0;
@@ -476,7 +479,7 @@ export async function generateBookCovers(
   try {
     const client = new Anthropic({ apiKey });
     const response = await client.messages.create({
-      model: COVER_BRIEF_MODEL,
+      model: coverModel,
       max_tokens: 4096,
       system: COVER_BRIEF_SYSTEM,
       tools: [writeCoverBriefsTool],
@@ -638,7 +641,7 @@ export async function generateBookCovers(
       userId: opts.userId,
       sessionId: opts.sessionId ? new mongoose.Types.ObjectId(opts.sessionId) : undefined,
       feature: 'book-cover',
-      modelName: COVER_BRIEF_MODEL,
+      modelName: coverModel,
       inputTokens: briefUsageInput,
       outputTokens: briefUsageOutput,
     });

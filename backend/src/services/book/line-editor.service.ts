@@ -7,6 +7,7 @@ import { craftBibleFor } from '../writing/craft-bible';
 import { chunkTextByParagraph, rejoinChunks, type TextChunk } from '../writing/chunk-text';
 import { loadE2BConfig, connectComputeSandbox } from '../computer/e2b-client';
 import { upsertSession } from '../computer/e2b-session-store';
+import { resolveUserModel } from '../model-select';
 
 /**
  * Line Editor — Slice 5 pass 2.
@@ -31,9 +32,9 @@ export interface RunLineEditOptions {
   /** If set, edit ONLY this chapter (used by the regenerate-one-chapter flow). */
   chapterN?: number;
   sessionId?: string;
+  model?: string;
 }
 
-const LINE_EDIT_MODEL = 'claude-sonnet-4-6';
 const SANDBOX_BOOK_DIR = '/home/user/book';
 const CHUNK_TARGET_WORDS = 2500;
 const CHUNK_TAIL_WORDS = 200;
@@ -238,6 +239,7 @@ export async function runLineEdit(opts: RunLineEditOptions, writer: LineEditSSEW
   }
 
   const client = new Anthropic({ apiKey });
+  const lineEditModel = resolveUserModel(opts.model);
   const hasFemalePov = book.outline
     ? hasFemalePovFor(book.outline.pov, book.outline.tone)
     : false;
@@ -313,7 +315,7 @@ export async function runLineEdit(opts: RunLineEditOptions, writer: LineEditSSEW
 
       try {
         const response = await client.messages.create({
-          model: LINE_EDIT_MODEL,
+          model: lineEditModel,
           max_tokens: 4096,
           system,
           tools: [rewriteChunkTool],
@@ -418,7 +420,7 @@ export async function runLineEdit(opts: RunLineEditOptions, writer: LineEditSSEW
       userId: opts.userId,
       sessionId: opts.sessionId ? new mongoose.Types.ObjectId(opts.sessionId) : undefined,
       feature: 'book-line-edit',
-      modelName: LINE_EDIT_MODEL,
+      modelName: lineEditModel,
       inputTokens: totalInput,
       outputTokens: totalOutput,
     });
